@@ -64,6 +64,19 @@ export const toolInputSchemas = {
     fileKey: fileKeyField,
   }),
 
+  set_node_visibility: z.object({
+    items: z
+      .array(
+        z.object({
+          nodeId: figmaNodeId.describe("The node ID to modify"),
+          visible: z.boolean().describe("true to show, false to hide"),
+        })
+      )
+      .min(1)
+      .describe("List of nodes with their target visibility"),
+    fileKey: fileKeyField,
+  }),
+
   save_screenshots: z.object({
     items: z
       .array(
@@ -116,6 +129,7 @@ const rpcToArgs: Record<
   get_design_context: (_nodeIds, params) => ({ ...params }),
   get_variable_defs: (_nodeIds, params) => ({ ...params }),
   get_screenshot: (nodeIds, params) => ({ nodeIds, ...params }),
+  set_node_visibility: (_nodeIds, params) => ({ ...params }),
   save_screenshots: (_nodeIds, params) => ({ ...params }),
 };
 

@@ -8,7 +8,8 @@ type RequestType =
   | "get_metadata"
   | "get_design_context"
   | "get_variable_defs"
-  | "get_screenshot";
+  | "get_screenshot"
+  | "set_node_visibility";
 
 type ServerRequest = {
   type: RequestType;
@@ -18,6 +19,7 @@ type ServerRequest = {
     format?: "PNG" | "SVG" | "JPG" | "PDF";
     scale?: number;
     depth?: number;
+    items?: Array<{ nodeId: string; visible: boolean }>;
   };
 };
 
@@ -349,6 +351,29 @@ const handleRequest = async (
           data: {
             exports,
           },
+        };
+      }
+      case "set_node_visibility": {
+        const items = request.params?.items;
+        if (!items || items.length === 0) {
+          throw new Error("items is required for set_node_visibility");
+        }
+        const results = await Promise.all(
+          items.map(async ({ nodeId, visible }) => {
+            const node = await figma.getNodeByIdAsync(nodeId);
+            if (!node || node.type === "DOCUMENT" || node.type === "PAGE") {
+              return { nodeId, error: `Node not found: ${nodeId}` };
+            }
+            const sceneNode = node as SceneNode;
+            const previousVisible = sceneNode.visible;
+            sceneNode.visible = visible;
+            return { nodeId, previousVisible, visible };
+          })
+        );
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: { results },
         };
       }
       default:

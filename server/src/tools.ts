@@ -175,6 +175,17 @@ export function registerTools(
   );
 
   server.tool(
+    "set_node_visibility",
+    "Show or hide specific Figma nodes. Returns previous visibility for each node so you can restore them after. Useful for isolating a single layer before exporting: hide all siblings, export the frame, then restore visibility.",
+    toolInputSchemas.set_node_visibility.shape,
+    async ({ items, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("set_node_visibility", undefined, { items }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
     "save_screenshots",
     "Export screenshots for multiple nodes and save them directly to the local filesystem. Returns metadata only (no base64). When multiple files are connected, specify fileKey.",
     toolInputSchemas.save_screenshots.shape,
