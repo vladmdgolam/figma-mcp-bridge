@@ -23,6 +23,8 @@ Figma MCP Bridge is a solution to this problem. It is a plugin + MCP server that
 
 It supports **multiple Figma files connected simultaneously**; open the plugin in each file and your AI agent can query any of them by `fileKey`. Single-file setups work exactly as before with no changes required.
 
+It also includes a small, opt-in set of **write tools** for safe agent-driven edits — see [Editing Notes](#editing-notes) below.
+
 ## Demo
 
 [Watch a demo of building a UI in Cursor with Figma MCP Bridge](https://youtu.be/ouygIhFBx0g)
@@ -73,8 +75,32 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `get_variable_defs` | Get all variable collections, modes, and values (design tokens) |
 | `get_screenshot` | Export nodes as PNG/SVG/JPG/PDF (base64-encoded) |
 | `save_screenshots` | Export and save screenshots directly to the local filesystem |
+| `set_node_visibility` | Show or hide specific nodes |
+| `set_text_content` | Replace the contents of a text node |
+| `set_text_properties` | Patch font, size, alignment, auto-resize, color, and bounds on a text node |
+| `set_node_properties` | Patch common node properties like name, position, size, visibility, opacity, radius, and solid fill |
+| `create_frame` | Create a new frame, optionally under a parent |
+| `create_text` | Create a new text node |
+| `create_shape` | Create a rectangle, ellipse, or line |
+| `duplicate_nodes` | Duplicate nodes in place |
+| `reparent_nodes` | Move nodes into another parent |
+| `delete_nodes` | Delete nodes with explicit confirmation |
 
 All tools accept an optional `fileKey` parameter when multiple Figma files are connected. Use `list_files` to discover connected files and their keys.
+
+### Editing Notes
+
+- Edit tools work only when the plugin is opened in Figma's design editor (Dev Mode is read-only — they will return a clear error there).
+- The current user must have permission to edit the target file.
+- `delete_nodes` is intentionally gated behind `confirm: true`.
+- Text edits automatically load the fonts currently used by the target text node before applying the new content.
+- New text nodes default to `Inter Regular` unless a font is provided.
+
+### What You Can Build
+
+With the current write surface, an agent can build a basic slide deck in a new empty Figma file: create slide frames, style titles and body copy, lay out rectangles/ellipses/lines for cards and dividers, duplicate slide templates, reparent content into the right frame, and adjust common geometry/visual properties after the fact.
+
+The current version is intentionally limited — no components, no variables/styles authoring, no advanced auto-layout editing yet.
 
 ## Local development
 

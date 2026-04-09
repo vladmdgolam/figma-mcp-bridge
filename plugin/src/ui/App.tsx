@@ -9,17 +9,23 @@ type RequestType =
   | "get_metadata"
   | "get_design_context"
   | "get_variable_defs"
-  | "get_screenshot";
+  | "get_screenshot"
+  | "set_node_visibility"
+  | "set_text_content"
+  | "set_text_properties"
+  | "set_node_properties"
+  | "create_frame"
+  | "create_text"
+  | "create_shape"
+  | "duplicate_nodes"
+  | "reparent_nodes"
+  | "delete_nodes";
 
 type ServerRequest = {
   type: RequestType;
   requestId: string;
   nodeIds?: string[];
-  params?: {
-    format?: "PNG" | "SVG" | "JPG" | "PDF";
-    scale?: number;
-    depth?: number;
-  };
+  params?: Record<string, unknown>;
 };
 
 type PluginResponse = {

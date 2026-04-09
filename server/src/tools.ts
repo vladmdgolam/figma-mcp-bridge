@@ -2,7 +2,17 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Node } from "./node.js";
-import { toolInputSchemas } from "./schema.js";
+import {
+  createFrameInput,
+  createShapeShape,
+  createTextShape,
+  createShapeInput,
+  createTextInput,
+  setNodePropertiesInput,
+  setTextPropertiesShape,
+  setTextPropertiesInput,
+  toolInputSchemas,
+} from "./schema.js";
 import type { BridgeResponse } from "./types.js";
 import { Follower } from "./follower.js";
 
@@ -181,6 +191,105 @@ export function registerTools(
     async ({ items, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
         node.sendWithParams("set_node_visibility", undefined, { items }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "set_text_content",
+    "Update the contents of a single text node. The plugin loads the node's fonts before applying the new text. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.set_text_content.shape,
+    async ({ nodeId, text, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("set_text_content", [nodeId], { text }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "set_text_properties",
+    "Patch common text properties such as font family/style, size, alignment, auto-resize, line height, letter spacing, fill color, and bounds. When multiple files are connected, specify fileKey.",
+    setTextPropertiesShape.shape,
+    async ({ nodeId, fileKey, ...properties }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("set_text_properties", [nodeId], properties, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "set_node_properties",
+    "Patch common node properties such as name, position, size, visibility, opacity, corner radius, and solid fill color. Only supported properties for the target node type may be changed. When multiple files are connected, specify fileKey.",
+    setNodePropertiesInput.shape,
+    async ({ nodeId, fileKey, ...properties }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("set_node_properties", [nodeId], properties, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "create_frame",
+    "Create a new frame, optionally inside a specified parent. You can set name, size, position, and a solid fill. When multiple files are connected, specify fileKey.",
+    createFrameInput.shape,
+    async ({ fileKey, ...params }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("create_frame", undefined, params, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "create_text",
+    "Create a new text node, optionally inside a specified parent. You can set its content, font, size, alignment, color, position, and bounds. When multiple files are connected, specify fileKey.",
+    createTextShape.shape,
+    async ({ fileKey, ...params }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("create_text", undefined, params, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "create_shape",
+    "Create a rectangle, ellipse, or line, optionally inside a specified parent. You can set its size, position, rotation, fill, and stroke. When multiple files are connected, specify fileKey.",
+    createShapeShape.shape,
+    async ({ fileKey, ...params }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("create_shape", undefined, params, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "duplicate_nodes",
+    "Duplicate one or more nodes in place. The duplicates remain under the same parent as the originals. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.duplicate_nodes.shape,
+    async ({ nodeIds, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("duplicate_nodes", nodeIds, undefined, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "reparent_nodes",
+    "Move one or more nodes into a different parent container. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.reparent_nodes.shape,
+    async ({ nodeIds, parentId, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("reparent_nodes", nodeIds, { parentId }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "delete_nodes",
+    "Delete one or more nodes. This is destructive and requires confirm: true. Page and document nodes cannot be deleted through this tool. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.delete_nodes.shape,
+    async ({ nodeIds, confirm, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("delete_nodes", nodeIds, { confirm }, fileKey)
       );
     }
   );
