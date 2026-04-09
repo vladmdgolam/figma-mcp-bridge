@@ -12,6 +12,7 @@ const textAlignHorizontal = z.enum(["LEFT", "CENTER", "RIGHT", "JUSTIFIED"]);
 const textAlignVertical = z.enum(["TOP", "CENTER", "BOTTOM"]);
 const textAutoResize = z.enum(["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"]);
 const shapeType = z.enum(["RECTANGLE", "ELLIPSE", "LINE"]);
+const imageScaleMode = z.enum(["FILL", "FIT"]);
 
 const fileKeyField = z
   .string()
@@ -217,6 +218,32 @@ export const createShapeInput = createShapeShape
     "strokeHex is required when strokeOpacity is provided",
   );
 
+export const createImageInput = z.object({
+  source: z
+    .string()
+    .min(1)
+    .describe(
+      "Image source. Accepts a local file path (absolute or relative to the MCP server cwd), an http/https URL, or a data URI."
+    ),
+  name: z.string().optional().describe("Optional image node name"),
+  parentId: figmaNodeId
+    .optional()
+    .describe("Optional parent node ID to append the image into"),
+  x: z.number().optional().describe("Optional x position"),
+  y: z.number().optional().describe("Optional y position"),
+  width: z.number().positive().optional().describe("Optional width"),
+  height: z.number().positive().optional().describe("Optional height"),
+  cornerRadius: z
+    .number()
+    .min(0)
+    .optional()
+    .describe("Optional corner radius"),
+  scaleMode: imageScaleMode
+    .optional()
+    .describe("How the image should fit its bounds: FILL (default) or FIT"),
+  fileKey: fileKeyField,
+});
+
 export const toolInputSchemas = {
   get_document: z.object({
     fileKey: fileKeyField,
@@ -321,6 +348,8 @@ export const toolInputSchemas = {
 
   create_shape: createShapeInput,
 
+  create_image: createImageInput,
+
   duplicate_nodes: z.object({
     nodeIds: z
       .array(figmaNodeId)
@@ -408,6 +437,7 @@ const rpcToArgs: Record<
   create_frame: (_nodeIds, params) => ({ ...params }),
   create_text: (_nodeIds, params) => ({ ...params }),
   create_shape: (_nodeIds, params) => ({ ...params }),
+  create_image: (_nodeIds, params) => ({ ...params }),
   duplicate_nodes: (nodeIds, params) => ({ nodeIds, ...params }),
   reparent_nodes: (nodeIds, params) => ({ nodeIds, ...params }),
   delete_nodes: (nodeIds, params) => ({ nodeIds, ...params }),

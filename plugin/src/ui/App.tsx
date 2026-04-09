@@ -17,6 +17,7 @@ type RequestType =
   | "create_frame"
   | "create_text"
   | "create_shape"
+  | "create_image"
   | "duplicate_nodes"
   | "reparent_nodes"
   | "delete_nodes";

@@ -16,6 +16,7 @@ type RequestType =
   | "create_frame"
   | "create_text"
   | "create_shape"
+  | "create_image"
   | "duplicate_nodes"
   | "reparent_nodes"
   | "delete_nodes";
@@ -252,6 +253,14 @@ const appendToParentIfProvided = async (
   }
   const parent = await getParentNodeById(parentId);
   parent.appendChild(node);
+};
+
+const decodeBase64ToBytes = (base64: string): Uint8Array => {
+  try {
+    return figma.base64Decode(base64);
+  } catch {
+    throw new Error("Invalid base64 image payload");
+  }
 };
 
 const handleRequest = async (
@@ -942,6 +951,65 @@ const handleRequest = async (
             y: "y" in node ? node.y : undefined,
             width: "width" in node ? node.width : undefined,
             height: "height" in node ? node.height : undefined,
+          },
+        };
+      }
+      case "create_image": {
+        const params = request.params ?? {};
+        if (typeof params.imageBase64 !== "string" || params.imageBase64.length === 0) {
+          throw new Error("imageBase64 is required for create_image");
+        }
+
+        const image = figma.createImage(decodeBase64ToBytes(params.imageBase64));
+        const imageSize = await image.getSizeAsync();
+        const node = figma.createRectangle();
+
+        if (typeof params.name === "string") {
+          node.name = params.name;
+        }
+
+        const aspectRatio = imageSize.width / imageSize.height;
+        const width =
+          typeof params.width === "number"
+            ? params.width
+            : typeof params.height === "number"
+              ? params.height * aspectRatio
+              : imageSize.width;
+        const height =
+          typeof params.height === "number"
+            ? params.height
+            : typeof params.width === "number"
+              ? params.width / aspectRatio
+              : imageSize.height;
+
+        node.resize(width, height);
+        node.fills = [
+          {
+            type: "IMAGE",
+            imageHash: image.hash,
+            scaleMode: params.scaleMode === "FIT" ? "FIT" : "FILL",
+          },
+        ];
+
+        if (typeof params.cornerRadius === "number") {
+          node.cornerRadius = params.cornerRadius;
+        }
+
+        await appendToParentIfProvided(node, params.parentId);
+        positionNode(node, params.x, params.y);
+
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            nodeId: node.id,
+            nodeName: node.name,
+            parentId: node.parent?.id,
+            x: node.x,
+            y: node.y,
+            width: node.width,
+            height: node.height,
+            imageHash: image.hash,
           },
         };
       }

@@ -1,9 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Node } from "./node.js";
 import {
   createFrameInput,
+  createImageInput,
   createShapeShape,
   createTextShape,
   createShapeInput,
@@ -262,6 +263,35 @@ export function registerTools(
   );
 
   server.tool(
+    "create_image",
+    "Create an image-backed rectangle from a local file path, remote URL, or data URI. You can set its parent, position, size, corner radius, and fit mode. When multiple files are connected, specify fileKey.",
+    createImageInput.shape,
+    async ({ source, fileKey, ...params }): Promise<ToolResult> => {
+      try {
+        const imageBase64 = await loadImageSourceAsBase64(source, process.cwd());
+        return await renderResponse(() =>
+          node.sendWithParams(
+            "create_image",
+            undefined,
+            { ...params, imageBase64 },
+            fileKey
+          )
+        );
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
     "duplicate_nodes",
     "Duplicate one or more nodes in place. The duplicates remain under the same parent as the originals. When multiple files are connected, specify fileKey.",
     toolInputSchemas.duplicate_nodes.shape,
@@ -409,6 +439,31 @@ function resolveAndValidateOutputPath(
     );
   }
   return resolvedPath;
+}
+
+async function loadImageSourceAsBase64(
+  source: string,
+  workspaceRoot: string
+): Promise<string> {
+  if (/^https?:\/\//i.test(source)) {
+    const resp = await fetch(source);
+    if (!resp.ok) {
+      throw new Error(`Failed to fetch image: ${resp.status} ${resp.statusText}`);
+    }
+    const bytes = Buffer.from(await resp.arrayBuffer());
+    return bytes.toString("base64");
+  }
+
+  const dataUrlMatch = source.match(/^data:.*?;base64,(.+)$/);
+  if (dataUrlMatch) {
+    return dataUrlMatch[1];
+  }
+
+  const resolvedPath = path.isAbsolute(source)
+    ? source
+    : path.resolve(workspaceRoot, source);
+  const bytes = await readFile(resolvedPath);
+  return bytes.toString("base64");
 }
 
 function inferFormatFromPath(outputPath: string): ExportFormat | null {
