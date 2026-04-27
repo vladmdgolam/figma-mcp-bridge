@@ -331,6 +331,7 @@ const serializeText = (node: TextNode, base: SerializedNode): SerializedNode => 
       textDecoration: isMixed(node.textDecoration)
         ? "mixed"
         : node.textDecoration,
+      textCase: isMixed(node.textCase) ? "mixed" : node.textCase,
       lineHeight: serializeLineHeight(node.lineHeight),
       letterSpacing: serializeLetterSpacing(node.letterSpacing),
       textAlignHorizontal: isMixed(node.textAlignHorizontal)
