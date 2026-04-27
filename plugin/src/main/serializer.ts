@@ -92,6 +92,12 @@ type SerializedBounds = {
   height: number;
 };
 
+type NodeStub = {
+  id: string;
+  name: string;
+  type: string;
+};
+
 type SerializedNode = {
   id: string;
   name: string;
@@ -99,8 +105,17 @@ type SerializedNode = {
   bounds?: SerializedBounds;
   characters?: string;
   styles?: SerializedStyles;
-  children?: SerializedNode[];
+  children?: (SerializedNode | NodeStub)[];
   childCount?: number;
+};
+
+export type SerializeOptions = {
+  /**
+   * Max depth to serialize fully. At this depth, children are emitted as
+   * `{id, name, type}` stubs. 0 = this node + stub children. undefined =
+   * unlimited (full recursion, legacy default).
+   */
+  depth?: number;
 };
 
 const isMixed = (value: unknown): value is symbol => typeof value === "symbol";
@@ -256,29 +271,39 @@ const serializeText = (node: TextNode, base: SerializedNode) => {
 const serializeStyles = (node: SceneNode): SerializedStyles => {
   const styles: SerializedStyles = {};
 
-  if ("opacity" in node) {
+  if ("opacity" in node && (node.opacity as number) !== 1) {
     styles.opacity = node.opacity as number;
   }
-  if ("blendMode" in node) {
+  if (
+    "blendMode" in node &&
+    node.blendMode !== "NORMAL" &&
+    node.blendMode !== "PASS_THROUGH"
+  ) {
     styles.blendMode = node.blendMode as string;
   }
-  if ("visible" in node) {
-    styles.visible = node.visible;
+  if ("visible" in node && node.visible === false) {
+    styles.visible = false;
   }
 
   if ("fills" in node) {
-    styles.fills = serializePaints(node.fills);
+    const fills = serializePaints(node.fills);
+    if (fills === "mixed" || fills.length > 0) {
+      styles.fills = fills;
+    }
   }
   if ("strokes" in node) {
-    styles.strokes = serializePaints(node.strokes);
-  }
-  if ("strokeWeight" in node) {
-    styles.strokeWeight = isMixed(node.strokeWeight)
-      ? "mixed"
-      : (node.strokeWeight as number);
-  }
-  if ("strokeAlign" in node) {
-    styles.strokeAlign = node.strokeAlign as string;
+    const strokes = serializePaints(node.strokes);
+    if (strokes === "mixed" || strokes.length > 0) {
+      styles.strokes = strokes;
+      if ("strokeWeight" in node) {
+        styles.strokeWeight = isMixed(node.strokeWeight)
+          ? "mixed"
+          : (node.strokeWeight as number);
+      }
+      if ("strokeAlign" in node) {
+        styles.strokeAlign = node.strokeAlign as string;
+      }
+    }
   }
   if ("dashPattern" in node) {
     const pattern = node.dashPattern as readonly number[];
@@ -295,9 +320,11 @@ const serializeStyles = (node: SceneNode): SerializedStyles => {
   }
 
   if ("cornerRadius" in node) {
-    styles.cornerRadius = isMixed(node.cornerRadius)
-      ? "mixed"
-      : (node.cornerRadius as number);
+    if (isMixed(node.cornerRadius)) {
+      styles.cornerRadius = "mixed";
+    } else if ((node.cornerRadius as number) !== 0) {
+      styles.cornerRadius = node.cornerRadius as number;
+    }
   }
   if ("topLeftRadius" in node) {
     const tl = node.topLeftRadius as number;
@@ -360,33 +387,69 @@ const serializeStyles = (node: SceneNode): SerializedStyles => {
   }
   if ("constraints" in node) {
     const c = node.constraints as Constraints;
-    styles.constraints = { horizontal: c.horizontal, vertical: c.vertical };
+    if (c.horizontal !== "MIN" || c.vertical !== "MIN") {
+      styles.constraints = { horizontal: c.horizontal, vertical: c.vertical };
+    }
   }
 
   return styles;
 };
 
-export const serializeNode = (node: SceneNode): SerializedNode => {
+const stubChild = (child: SceneNode): NodeStub => ({
+  id: child.id,
+  name: child.name,
+  type: child.type,
+});
+
+const serializeNodeInner = (
+  node: SceneNode,
+  options: SerializeOptions,
+  currentDepth: number
+): SerializedNode => {
+  const styles = serializeStyles(node);
   const base: SerializedNode = {
     id: node.id,
     name: node.name,
     type: node.type,
     bounds: getBounds(node),
-    styles: serializeStyles(node),
   };
+  if (Object.keys(styles).length > 0) {
+    base.styles = styles;
+  }
 
   if (node.type === "TEXT") {
     return serializeText(node, base);
   }
 
   if ("children" in node) {
+    const visibleChildren = node.children.filter(
+      (child) => child.visible !== false
+    );
+    if (visibleChildren.length === 0) {
+      return base;
+    }
+
+    const { depth } = options;
+    if (depth !== undefined && currentDepth >= depth) {
+      return {
+        ...base,
+        children: visibleChildren.map(stubChild),
+        childCount: visibleChildren.length,
+      };
+    }
+
     return {
       ...base,
-      children: node.children
-        .filter((child) => child.visible !== false)
-        .map((child) => serializeNode(child)),
+      children: visibleChildren.map((child) =>
+        serializeNodeInner(child, options, currentDepth + 1)
+      ),
     };
   }
 
   return base;
 };
+
+export const serializeNode = (
+  node: SceneNode,
+  options: SerializeOptions = {}
+): SerializedNode => serializeNodeInner(node, options, 0);

@@ -250,18 +250,30 @@ const handleRequest = async (
 ): Promise<PluginResponse> => {
   try {
     switch (request.type) {
-      case "get_document":
+      case "get_document": {
+        const depth =
+          typeof request.params?.depth === "number"
+            ? (request.params.depth as number)
+            : undefined;
         return {
           type: request.type,
           requestId: request.requestId,
-          data: serializeNode(figma.currentPage),
+          data: serializeNode(figma.currentPage, { depth }),
         };
-      case "get_selection":
+      }
+      case "get_selection": {
+        const depth =
+          typeof request.params?.depth === "number"
+            ? (request.params.depth as number)
+            : undefined;
         return {
           type: request.type,
           requestId: request.requestId,
-          data: figma.currentPage.selection.map((node) => serializeNode(node)),
+          data: figma.currentPage.selection.map((node) =>
+            serializeNode(node, { depth })
+          ),
         };
+      }
       case "get_node": {
         const nodeId = request.nodeIds && request.nodeIds[0];
         if (!nodeId) {
@@ -271,10 +283,14 @@ const handleRequest = async (
         if (!node || node.type === "DOCUMENT") {
           throw new Error(`Node not found: ${nodeId}`);
         }
+        const depth =
+          typeof request.params?.depth === "number"
+            ? (request.params.depth as number)
+            : undefined;
         return {
           type: request.type,
           requestId: request.requestId,
-          data: serializeNode(node as SceneNode),
+          data: serializeNode(node as SceneNode, { depth }),
         };
       }
       case "get_styles": {
@@ -335,58 +351,14 @@ const handleRequest = async (
       case "get_design_context": {
         const depth =
           typeof request.params?.depth === "number" ? request.params.depth : 2;
-        const serializeWithDepth = async (
-          node: unknown,
-          currentDepth: number
-        ): Promise<ReturnType<typeof serializeNode>> => {
-          const serialized = serializeNode(node);
-          if (currentDepth >= depth && serialized.children) {
-            // Truncate children at depth limit, but show count
-            return {
-              ...serialized,
-              children: undefined,
-              childCount:
-                (node as ChildrenMixin & SceneNode).children?.filter(
-                  (c) => c.visible !== false
-                ).length ?? 0,
-            } as ReturnType<typeof serializeNode> & { childCount: number };
-          }
-          if (serialized.children) {
-            const childNodes = await Promise.all(
-              serialized.children.map((child) =>
-                figma.getNodeByIdAsync(child.id)
-              )
-            );
-            const serializedChildren = await Promise.all(
-              childNodes
-                .filter(
-                  (n): n is SceneNode =>
-                    n !== null &&
-                    n.type !== "DOCUMENT" &&
-                    "visible" in n &&
-                    n.visible !== false
-                )
-                .map((n) => serializeWithDepth(n, currentDepth + 1))
-            );
-            return {
-              ...serialized,
-              children: serializedChildren,
-            };
-          }
-          return serialized;
-        };
-
         const selection = figma.currentPage.selection;
         const contextNodes =
           selection.length > 0
-            ? await Promise.all(
-                selection.map((node) => serializeWithDepth(node, 0))
-              )
+            ? selection.map((node) => serializeNode(node, { depth }))
             : [
-                await serializeWithDepth(
-                  figma.currentPage as unknown as SceneNode,
-                  0
-                ),
+                serializeNode(figma.currentPage as unknown as SceneNode, {
+                  depth,
+                }),
               ];
 
         return {

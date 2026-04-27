@@ -92,34 +92,46 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "get_document",
-    "Get the current Figma page document tree. When multiple files are connected, specify fileKey.",
+    "Get the current Figma page document tree. Omitted style fields are at Figma defaults (opacity=1, visible=true, blendMode=NORMAL/PASS_THROUGH, rotation=0, cornerRadius=0, constraints={MIN,MIN}; empty fills/strokes/effects mean none set). Pass `depth` to cap tree size — children past the depth limit are returned as {id,name,type} stubs.",
     toolInputSchemas.get_document.shape,
-    async ({ fileKey }): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_document", undefined, fileKey));
+    async ({ depth, fileKey }): Promise<ToolResult> => {
+      const params: Record<string, unknown> = {};
+      if (depth !== undefined) params.depth = depth;
+      return renderResponse(() =>
+        node.sendWithParams("get_document", undefined, params, fileKey)
+      );
     }
   );
 
   server.tool(
     "get_selection",
-    "Get the currently selected nodes in Figma. When multiple files are connected, specify fileKey.",
+    "Get the currently selected nodes in Figma. Omitted style fields are at Figma defaults (see get_node). Pass `depth` to cap tree size — children past the depth limit are returned as {id,name,type} stubs.",
     toolInputSchemas.get_selection.shape,
-    async ({ fileKey }): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_selection", undefined, fileKey));
+    async ({ depth, fileKey }): Promise<ToolResult> => {
+      const params: Record<string, unknown> = {};
+      if (depth !== undefined) params.depth = depth;
+      return renderResponse(() =>
+        node.sendWithParams("get_selection", undefined, params, fileKey)
+      );
     }
   );
 
   server.tool(
     "get_node",
-    "Get a specific Figma node by ID. Must use colon format, e.g. '4029:12345', never use hyphens. When multiple files are connected, specify fileKey.",
+    "Get a specific Figma node by ID (colon format, e.g. '4029:12345' — never hyphens). By default returns the node with its children as {id,name,type} stubs; call get_node again on a child ID to drill in. Pass `depth` for more levels at once, or a large value for the full subtree. Omitted style fields are at Figma defaults (opacity=1, visible=true, blendMode=NORMAL/PASS_THROUGH, rotation=0, cornerRadius=0, constraints={MIN,MIN}; empty fills/strokes/effects mean none set).",
     toolInputSchemas.get_node.shape,
-    async ({ nodeId, fileKey }): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_node", [nodeId], fileKey));
+    async ({ nodeId, depth, fileKey }): Promise<ToolResult> => {
+      const params: Record<string, unknown> = {};
+      params.depth = depth ?? 0;
+      return renderResponse(() =>
+        node.sendWithParams("get_node", [nodeId], params, fileKey)
+      );
     }
   );
 
   server.tool(
     "get_styles",
-    "Get all local styles in the document. When multiple files are connected, specify fileKey.",
+    "Get all local styles in the document.",
     toolInputSchemas.get_styles.shape,
     async ({ fileKey }): Promise<ToolResult> => {
       return renderResponse(() => node.send("get_styles", undefined, fileKey));
@@ -128,7 +140,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "get_metadata",
-    "Get metadata about the current Figma document including file name, pages, and current page info. When multiple files are connected, specify fileKey.",
+    "Get metadata about the current Figma document including file name, pages, and current page info.",
     toolInputSchemas.get_metadata.shape,
     async ({ fileKey }): Promise<ToolResult> => {
       return renderResponse(() => node.send("get_metadata", undefined, fileKey));
@@ -137,7 +149,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "get_design_context",
-    "Get the design context for the current selection or page. Returns a summarized tree structure optimized for understanding the current design context. When multiple files are connected, specify fileKey.",
+    "Get the design context for the current selection or page. Returns a summarized tree structure optimized for understanding the current design context.",
     toolInputSchemas.get_design_context.shape,
     async ({ depth, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = {};
@@ -152,7 +164,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "get_variable_defs",
-    "Get all local variable definitions including variable collections, modes, and variable values. Variables are Figma's system for design tokens (colors, numbers, strings, booleans). When multiple files are connected, specify fileKey.",
+    "Get all local variable definitions including variable collections, modes, and variable values. Variables are Figma's system for design tokens (colors, numbers, strings, booleans).",
     toolInputSchemas.get_variable_defs.shape,
     async ({ fileKey }): Promise<ToolResult> => {
       return renderResponse(() => node.send("get_variable_defs", undefined, fileKey));
@@ -161,7 +173,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "get_screenshot",
-    "Export a screenshot of the selected nodes or specific nodes by ID. Returns base64-encoded image data. When multiple files are connected, specify fileKey.",
+    "Export a screenshot of the selected nodes or specific nodes by ID. Returns base64-encoded image data.",
     toolInputSchemas.get_screenshot.shape,
     async ({ nodeIds, format, scale, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = {};
@@ -222,7 +234,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "set_text_content",
-    "Update the contents of a single text node. The plugin loads the node's fonts before applying the new text. When multiple files are connected, specify fileKey.",
+    "Update the contents of a single text node. The plugin loads the node's fonts before applying the new text.",
     toolInputSchemas.set_text_content.shape,
     async ({ nodeId, text, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
@@ -233,7 +245,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "set_text_properties",
-    "Patch common text properties such as font family/style, size, alignment, auto-resize, line height, letter spacing, fill color, and bounds. When multiple files are connected, specify fileKey.",
+    "Patch common text properties such as font family/style, size, alignment, auto-resize, line height, letter spacing, fill color, and bounds.",
     setTextPropertiesShape.shape,
     async ({ nodeId, fileKey, ...properties }): Promise<ToolResult> => {
       return renderResponse(() =>
@@ -244,7 +256,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "set_node_properties",
-    "Patch common node properties such as name, position, size, visibility, opacity, corner radius, and solid fill color. Only supported properties for the target node type may be changed. When multiple files are connected, specify fileKey.",
+    "Patch common node properties such as name, position, size, visibility, opacity, corner radius, and solid fill color. Only supported properties for the target node type may be changed.",
     setNodePropertiesInput.shape,
     async ({ nodeId, fileKey, ...properties }): Promise<ToolResult> => {
       return renderResponse(() =>
@@ -255,7 +267,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "create_frame",
-    "Create a new frame, optionally inside a specified parent. You can set name, size, position, and a solid fill. When multiple files are connected, specify fileKey.",
+    "Create a new frame, optionally inside a specified parent. You can set name, size, position, and a solid fill.",
     createFrameInput.shape,
     async ({ fileKey, ...params }): Promise<ToolResult> => {
       return renderResponse(() =>
@@ -266,7 +278,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "create_text",
-    "Create a new text node, optionally inside a specified parent. You can set its content, font, size, alignment, color, position, and bounds. When multiple files are connected, specify fileKey.",
+    "Create a new text node, optionally inside a specified parent. You can set its content, font, size, alignment, color, position, and bounds.",
     createTextShape.shape,
     async ({ fileKey, ...params }): Promise<ToolResult> => {
       return renderResponse(() =>
@@ -277,7 +289,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "create_shape",
-    "Create a rectangle, ellipse, or line, optionally inside a specified parent. You can set its size, position, rotation, fill, and stroke. When multiple files are connected, specify fileKey.",
+    "Create a rectangle, ellipse, or line, optionally inside a specified parent. You can set its size, position, rotation, fill, and stroke.",
     createShapeShape.shape,
     async ({ fileKey, ...params }): Promise<ToolResult> => {
       return renderResponse(() =>
@@ -288,7 +300,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "create_image",
-    "Create an image-backed rectangle from a local file path, remote URL, or data URI. You can set its parent, position, size, corner radius, and fit mode. When multiple files are connected, specify fileKey.",
+    "Create an image-backed rectangle from a local file path, remote URL, or data URI. You can set its parent, position, size, corner radius, and fit mode.",
     createImageInput.shape,
     async ({ source, fileKey, ...params }): Promise<ToolResult> => {
       try {
@@ -317,7 +329,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "duplicate_nodes",
-    "Duplicate one or more nodes in place. The duplicates remain under the same parent as the originals. When multiple files are connected, specify fileKey.",
+    "Duplicate one or more nodes in place. The duplicates remain under the same parent as the originals.",
     toolInputSchemas.duplicate_nodes.shape,
     async ({ nodeIds, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
@@ -328,7 +340,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "reparent_nodes",
-    "Move one or more nodes into a different parent container. When multiple files are connected, specify fileKey.",
+    "Move one or more nodes into a different parent container.",
     toolInputSchemas.reparent_nodes.shape,
     async ({ nodeIds, parentId, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
@@ -339,7 +351,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "delete_nodes",
-    "Delete one or more nodes. This is destructive and requires confirm: true. Page and document nodes cannot be deleted through this tool. When multiple files are connected, specify fileKey.",
+    "Delete one or more nodes. This is destructive and requires confirm: true. Page and document nodes cannot be deleted through this tool.",
     toolInputSchemas.delete_nodes.shape,
     async ({ nodeIds, confirm, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
@@ -350,7 +362,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "save_screenshots",
-    "Export screenshots for multiple nodes and save them directly to the local filesystem. Returns metadata only (no base64). When multiple files are connected, specify fileKey.",
+    "Export screenshots for multiple nodes and save them directly to the local filesystem. Returns metadata only (no base64).",
     toolInputSchemas.save_screenshots.shape,
     async ({ items, format, scale, fileKey }): Promise<ToolResult> => {
       try {

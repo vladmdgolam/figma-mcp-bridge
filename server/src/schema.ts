@@ -246,15 +246,39 @@ export const createImageInput = z.object({
 
 export const toolInputSchemas = {
   get_document: z.object({
+    depth: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "How many levels deep to serialize fully. At the depth limit, children become {id,name,type} stubs. Omit for full tree."
+      ),
     fileKey: fileKeyField,
   }),
 
   get_selection: z.object({
+    depth: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "How many levels deep to serialize fully. At the depth limit, children become {id,name,type} stubs. Omit for full tree."
+      ),
     fileKey: fileKeyField,
   }),
 
   get_node: z.object({
     nodeId: figmaNodeId.describe("The node ID to fetch"),
+    depth: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "How many levels deep to serialize fully. Default 0 = this node only with children as {id,name,type} stubs. Set higher for more depth, or pass a large number for the full subtree."
+      ),
     fileKey: fileKeyField,
   }),
 
@@ -366,7 +390,9 @@ export const toolInputSchemas = {
 
   create_shape: createShapeInput,
 
-  create_image: createImageInput,
+  create_image: createImageInput.omit({ source: true }).extend({
+    imageBase64: z.string().min(1),
+  }),
 
   duplicate_nodes: z.object({
     nodeIds: z
