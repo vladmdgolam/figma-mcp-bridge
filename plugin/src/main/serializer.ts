@@ -98,6 +98,27 @@ type NodeStub = {
   type: string;
 };
 
+type SerializedLineHeight =
+  | { value: number; unit: "PIXELS" | "PERCENT" }
+  | { unit: "AUTO" };
+
+type SerializedLetterSpacing = { value: number; unit: "PIXELS" | "PERCENT" };
+
+type SerializedTextSegment = {
+  start: number;
+  end: number;
+  characters: string;
+  fills?: SerializedPaint[];
+  fontFamily?: string;
+  fontStyle?: string;
+  fontSize?: number;
+  fontWeight?: number;
+  textDecoration?: string;
+  textCase?: string;
+  lineHeight?: SerializedLineHeight;
+  letterSpacing?: SerializedLetterSpacing;
+};
+
 type SerializedNode = {
   id: string;
   name: string;
@@ -105,6 +126,7 @@ type SerializedNode = {
   bounds?: SerializedBounds;
   characters?: string;
   styles?: SerializedStyles;
+  segments?: SerializedTextSegment[];
   children?: (SerializedNode | NodeStub)[];
   childCount?: number;
 };
@@ -233,7 +255,60 @@ const getBounds = (node: SceneNode): SerializedBounds | undefined => {
   return undefined;
 };
 
-const serializeText = (node: TextNode, base: SerializedNode) => {
+const SEGMENT_FIELDS = [
+  "fills",
+  "fontName",
+  "fontSize",
+  "fontWeight",
+  "textDecoration",
+  "textCase",
+  "lineHeight",
+  "letterSpacing",
+] as const;
+
+type SegmentField = (typeof SEGMENT_FIELDS)[number];
+
+const getMixedSegmentFields = (node: TextNode): SegmentField[] =>
+  SEGMENT_FIELDS.filter((field) => isMixed((node as any)[field]));
+
+const serializeStyledSegments = (
+  node: TextNode,
+  fields: readonly SegmentField[]
+): SerializedTextSegment[] => {
+  const raw = node.getStyledTextSegments([...fields]);
+  return raw.map((seg) => {
+    const out: SerializedTextSegment = {
+      start: seg.start,
+      end: seg.end,
+      characters: node.characters.slice(seg.start, seg.end),
+    };
+    if ("fills" in seg) {
+      const fills = serializePaints(seg.fills as readonly Paint[]);
+      if (fills !== "mixed") out.fills = fills;
+    }
+    if ("fontName" in seg && seg.fontName) {
+      out.fontFamily = seg.fontName.family;
+      out.fontStyle = seg.fontName.style;
+    }
+    if ("fontSize" in seg) out.fontSize = seg.fontSize as number;
+    if ("fontWeight" in seg) out.fontWeight = seg.fontWeight as number;
+    if ("textDecoration" in seg) {
+      out.textDecoration = seg.textDecoration as string;
+    }
+    if ("textCase" in seg) out.textCase = seg.textCase as string;
+    if ("lineHeight" in seg) {
+      const lh = serializeLineHeight(seg.lineHeight as LineHeight);
+      if (lh !== "mixed") out.lineHeight = lh as SerializedLineHeight;
+    }
+    if ("letterSpacing" in seg) {
+      const ls = serializeLetterSpacing(seg.letterSpacing as LetterSpacing);
+      if (ls !== "mixed") out.letterSpacing = ls as SerializedLetterSpacing;
+    }
+    return out;
+  });
+};
+
+const serializeText = (node: TextNode, base: SerializedNode): SerializedNode => {
   let fontFamily: string | undefined;
   let fontStyle: string | undefined;
   if (typeof node.fontName === "symbol") {
@@ -243,7 +318,8 @@ const serializeText = (node: TextNode, base: SerializedNode) => {
     fontFamily = node.fontName.family;
     fontStyle = node.fontName.style;
   }
-  return {
+
+  const result: SerializedNode = {
     ...base,
     characters: node.characters,
     styles: {
@@ -264,8 +340,19 @@ const serializeText = (node: TextNode, base: SerializedNode) => {
         ? "mixed"
         : node.textAlignVertical,
       textAutoResize: node.textAutoResize,
-    },
+    } as unknown as SerializedStyles,
   };
+
+  const mixedFields = getMixedSegmentFields(node);
+  if (mixedFields.length > 0) {
+    try {
+      result.segments = serializeStyledSegments(node, mixedFields);
+    } catch {
+      // getStyledTextSegments can fail on unloaded fonts; ignore and keep "mixed" markers.
+    }
+  }
+
+  return result;
 };
 
 const serializeStyles = (node: SceneNode): SerializedStyles => {
