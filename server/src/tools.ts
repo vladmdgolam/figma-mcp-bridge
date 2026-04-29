@@ -10,6 +10,7 @@ import {
   createShapeInput,
   createTextInput,
   setNodePropertiesInput,
+  setGradientFillInput,
   setTextPropertiesShape,
   setTextPropertiesInput,
   toolInputSchemas,
@@ -261,6 +262,17 @@ export function registerTools(server: McpServer, node: Node, port: number): void
     async ({ nodeId, fileKey, ...properties }): Promise<ToolResult> => {
       return renderResponse(() =>
         node.sendWithParams("set_node_properties", [nodeId], properties, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "set_gradient_fill",
+    "Replace a node's fill (or stroke) with a gradient paint. Provide ordered stops (position 0..1, hex color, optional alpha) and an optional 2x3 gradientTransform matching Figma's gradientTransform format. Useful for setting linear/radial/angular/diamond gradients programmatically.",
+    setGradientFillInput.shape,
+    async ({ nodeId, fileKey, ...params }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("set_gradient_fill", [nodeId], params, fileKey)
       );
     }
   );
