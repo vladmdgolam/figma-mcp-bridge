@@ -14,6 +14,7 @@ type RequestType =
   | "set_text_content"
   | "set_text_properties"
   | "set_node_properties"
+  | "set_gradient_fill"
   | "create_frame"
   | "create_text"
   | "create_shape"

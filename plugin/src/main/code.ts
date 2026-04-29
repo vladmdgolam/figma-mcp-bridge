@@ -13,6 +13,7 @@ type RequestType =
   | "set_text_content"
   | "set_text_properties"
   | "set_node_properties"
+  | "set_gradient_fill"
   | "create_frame"
   | "create_text"
   | "create_shape"
@@ -172,6 +173,40 @@ const setSolidFill = (
       opacity: fillOpacity ?? 1,
     },
   ];
+};
+
+type GradientStopInput = { position: number; hex: string; opacity?: number };
+type GradientPaintType =
+  | "GRADIENT_LINEAR"
+  | "GRADIENT_RADIAL"
+  | "GRADIENT_ANGULAR"
+  | "GRADIENT_DIAMOND";
+
+const buildGradientPaint = (
+  paintType: GradientPaintType,
+  stops: GradientStopInput[],
+  transform: Transform | undefined,
+  opacity: number | undefined
+): GradientPaint => {
+  const colorStops = stops.map((stop) => {
+    const rgb = parseHexColor(stop.hex);
+    return {
+      position: stop.position,
+      color: { r: rgb.r, g: rgb.g, b: rgb.b, a: stop.opacity ?? 1 },
+    };
+  });
+  // Identity transform: [[1,0,0],[0,1,0]] (Figma-default, horizontal L→R).
+  const gradientTransform: Transform = transform ?? [
+    [1, 0, 0],
+    [0, 1, 0],
+  ];
+  const paint: GradientPaint = {
+    type: paintType,
+    gradientStops: colorStops,
+    gradientTransform,
+    opacity: opacity ?? 1,
+  };
+  return paint;
 };
 
 const loadFontsForTextNode = async (node: TextNode): Promise<void> => {
@@ -783,6 +818,72 @@ const handleRequest = async (
             nodeId: node.id,
             nodeName: node.name,
             applied,
+          },
+        };
+      }
+      case "set_gradient_fill": {
+        const nodeId = request.nodeIds && request.nodeIds[0];
+        if (!nodeId) {
+          throw new Error("nodeIds is required for set_gradient_fill");
+        }
+
+        const node = await getSceneNodeById(nodeId);
+        const params = request.params ?? {};
+
+        const target = params.target === "stroke" ? "stroke" : "fill";
+        if (target === "fill" && !("fills" in node)) {
+          throw new Error(`Node does not support fills: ${node.id}`);
+        }
+        if (target === "stroke" && !("strokes" in node)) {
+          throw new Error(`Node does not support strokes: ${node.id}`);
+        }
+
+        const gradientType =
+          typeof params.gradientType === "string"
+            ? (params.gradientType as string)
+            : "LINEAR";
+        const paintType = `GRADIENT_${gradientType}` as GradientPaintType;
+        if (
+          paintType !== "GRADIENT_LINEAR" &&
+          paintType !== "GRADIENT_RADIAL" &&
+          paintType !== "GRADIENT_ANGULAR" &&
+          paintType !== "GRADIENT_DIAMOND"
+        ) {
+          throw new Error(`Unsupported gradient type: ${gradientType}`);
+        }
+
+        if (!Array.isArray(params.gradientStops) || params.gradientStops.length < 2) {
+          throw new Error("gradientStops must have at least 2 entries");
+        }
+        const stops = params.gradientStops as GradientStopInput[];
+
+        const transform =
+          Array.isArray(params.gradientTransform) && params.gradientTransform.length === 2
+            ? (params.gradientTransform as Transform)
+            : undefined;
+
+        const opacity =
+          typeof params.opacity === "number" ? params.opacity : undefined;
+
+        const paint = buildGradientPaint(paintType, stops, transform, opacity);
+
+        if (target === "fill") {
+          (node as GeometryMixin & { fills: ReadonlyArray<Paint> }).fills = [paint];
+        } else {
+          (node as GeometryMixin & { strokes: ReadonlyArray<Paint> }).strokes = [paint];
+        }
+
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            nodeId: node.id,
+            nodeName: node.name,
+            applied: {
+              target,
+              gradientType: paintType,
+              stops: paint.gradientStops.length,
+            },
           },
         };
       }

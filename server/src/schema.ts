@@ -21,6 +21,54 @@ const fileKeyField = z
     "The fileKey of the Figma file to query. Required when multiple files are connected. Use list_files to see connected files."
   );
 
+const gradientStop = z.object({
+  position: z
+    .number()
+    .min(0)
+    .max(1)
+    .describe("Stop position from 0 (start of gradient) to 1 (end)"),
+  hex: hexColor.describe("Stop color as hex"),
+  opacity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Optional per-stop alpha (default 1)"),
+});
+
+const gradientTransform = z
+  .tuple([
+    z.tuple([z.number(), z.number(), z.number()]),
+    z.tuple([z.number(), z.number(), z.number()]),
+  ])
+  .describe(
+    "2x3 affine matrix [[a,b,tx],[c,d,ty]] mapping the unit gradient onto the shape (Figma's gradientTransform). Defaults to identity (horizontal left→right)."
+  );
+
+export const setGradientFillInput = z.object({
+  nodeId: figmaNodeId.describe("The node ID to update"),
+  gradientType: z
+    .enum(["LINEAR", "RADIAL", "ANGULAR", "DIAMOND"])
+    .optional()
+    .describe("Gradient family (default LINEAR)"),
+  gradientStops: z
+    .array(gradientStop)
+    .min(2)
+    .describe("Ordered list of gradient color stops (at least 2)"),
+  gradientTransform: gradientTransform.optional(),
+  opacity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Overall paint opacity (default 1)"),
+  target: z
+    .enum(["fill", "stroke"])
+    .optional()
+    .describe("Apply to fills or strokes (default fill)"),
+  fileKey: fileKeyField,
+});
+
 export const setNodePropertiesInput = z.object({
   nodeId: figmaNodeId.describe("The node ID to update"),
   name: z.string().optional().describe("Optional new node name"),
@@ -316,6 +364,8 @@ export const toolInputSchemas = {
 
   set_text_properties: setTextPropertiesInput,
 
+  set_gradient_fill: setGradientFillInput,
+
   set_node_properties: setNodePropertiesInput
     .refine(
       (value) =>
@@ -434,6 +484,7 @@ const rpcToArgs: Record<
   set_text_content: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   set_text_properties: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   set_node_properties: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
+  set_gradient_fill: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   create_frame: (_nodeIds, params) => ({ ...params }),
   create_text: (_nodeIds, params) => ({ ...params }),
   create_shape: (_nodeIds, params) => ({ ...params }),
