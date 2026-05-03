@@ -53,12 +53,12 @@ export class Node {
     return this.follower.sendWithParams(requestType, nodeIds, params, fileKey);
   }
 
-  listConnectedFiles(): ConnectedFile[] {
+  listConnectedFiles(): ConnectedFile[] | undefined {
     if (this._role === Role.Leader && this.leader) {
       return this.leader.getBridge().listConnectedFiles();
     }
-    // Followers return empty — the tool handler falls back to RPC
-    return [];
+    // Followers return undefined — the tool handler falls back to RPC
+    return undefined;
   }
 
   async becomeLeader(): Promise<void> {

@@ -16,6 +16,7 @@ import {
   toolInputSchemas,
 } from "./schema.js";
 import type { BridgeResponse } from "./types.js";
+import { Follower } from "./follower.js";
 
 type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -61,16 +62,19 @@ interface SaveScreenshotItemResult {
   error?: string;
 }
 
-export function registerTools(server: McpServer, node: Node, port: number): void {
+export function registerTools(
+  server: McpServer,
+  node: Node,
+  port: number
+): void {
   server.tool(
     "list_files",
     "List all currently connected Figma files. Returns fileKey and fileName for each. Use the fileKey to target a specific file in other tools.",
     async (): Promise<ToolResult> => {
       try {
         let files = node.listConnectedFiles();
-        if (files.length === 0) {
+        if (files === undefined) {
           // Follower: fetch via RPC from leader
-          const { Follower } = await import("./follower.js");
           const follower = new Follower(`http://localhost:${port}`);
           files = await follower.listConnectedFiles();
         }
@@ -132,7 +136,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "get_styles",
-    "Get all local styles in the document.",
+    "Get all local styles in the document. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_styles.shape,
     async ({ fileKey }): Promise<ToolResult> => {
       return renderResponse(() => node.send("get_styles", undefined, fileKey));
@@ -141,16 +145,18 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "get_metadata",
-    "Get metadata about the current Figma document including file name, pages, and current page info.",
+    "Get metadata about the current Figma document including file name, pages, and current page info. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_metadata.shape,
     async ({ fileKey }): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_metadata", undefined, fileKey));
+      return renderResponse(() =>
+        node.send("get_metadata", undefined, fileKey)
+      );
     }
   );
 
   server.tool(
     "get_design_context",
-    "Get the design context for the current selection or page. Returns a summarized tree structure optimized for understanding the current design context.",
+    "Get the design context for the current selection or page. Returns a summarized tree structure optimized for understanding the current design context. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_design_context.shape,
     async ({ depth, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = {};
@@ -165,16 +171,18 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "get_variable_defs",
-    "Get all local variable definitions including variable collections, modes, and variable values. Variables are Figma's system for design tokens (colors, numbers, strings, booleans).",
+    "Get all local variable definitions including variable collections, modes, and variable values. Variables are Figma's system for design tokens (colors, numbers, strings, booleans). When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_variable_defs.shape,
     async ({ fileKey }): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_variable_defs", undefined, fileKey));
+      return renderResponse(() =>
+        node.send("get_variable_defs", undefined, fileKey)
+      );
     }
   );
 
   server.tool(
     "get_screenshot",
-    "Export a screenshot of the selected nodes or specific nodes by ID. Returns base64-encoded image data.",
+    "Export a screenshot of the selected nodes or specific nodes by ID. Returns base64-encoded image data. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_screenshot.shape,
     async ({ nodeIds, format, scale, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = {};
@@ -374,7 +382,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "save_screenshots",
-    "Export screenshots for multiple nodes and save them directly to the local filesystem. Returns metadata only (no base64).",
+    "Export screenshots for multiple nodes and save them directly to the local filesystem. Returns metadata only (no base64). When multiple files are connected, specify fileKey.",
     toolInputSchemas.save_screenshots.shape,
     async ({ items, format, scale, fileKey }): Promise<ToolResult> => {
       try {
@@ -383,7 +391,12 @@ export function registerTools(server: McpServer, node: Node, port: number): void
           sendWithParams: (requestType, nodeIds, params) =>
             node.sendWithParams(requestType, nodeIds, params, fileKey),
         };
-        const result = await executeSaveScreenshots(sender, items, format, scale);
+        const result = await executeSaveScreenshots(
+          sender,
+          items,
+          format,
+          scale
+        );
         return {
           content: [{ type: "text", text: JSON.stringify(result) }],
         };

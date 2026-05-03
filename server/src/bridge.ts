@@ -26,9 +26,16 @@ export class Bridge {
   }
 
   handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
-    const url = new URL(request.url ?? "", "http://localhost");
-    const fileKey = url.searchParams.get("fileKey");
-    const fileName = url.searchParams.get("fileName") ?? "Unknown";
+    if (request.url == undefined) {
+      console.error("Plugin connected without url, rejecting");
+      socket.destroy();
+      return;
+    }
+
+    const url = new URL(request.url, "http://localhost");
+    const { fileKey, fileName = "Unknown" } = Object.fromEntries(
+      url.searchParams
+    );
 
     if (!fileKey) {
       console.error("Plugin connected without fileKey, rejecting");
@@ -41,7 +48,11 @@ export class Bridge {
     });
   }
 
-  private handleConnection(ws: WebSocket, fileKey: string, fileName: string): void {
+  private handleConnection(
+    ws: WebSocket,
+    fileKey: string,
+    fileName: string
+  ): void {
     // Replace existing connection for the same file
     const existing = this.connections.get(fileKey);
     if (existing) {
@@ -108,16 +119,19 @@ export class Bridge {
       const entry = this.connections.get(fileKey);
       if (!entry) {
         const available = this.listConnectedFiles();
-        const hint = available.length > 0
-          ? ` Connected files: ${available.map(f => `"${f.fileName}" (fileKey: ${f.fileKey})`).join(", ")}`
-          : " No files are currently connected.";
+        const hint =
+          available.length > 0
+            ? ` Connected files: ${available.map((f) => `"${f.fileName}" (fileKey: ${f.fileKey})`).join(", ")}`
+            : " No files are currently connected.";
         throw new Error(`No plugin connected for fileKey "${fileKey}".${hint}`);
       }
       return entry.ws;
     }
 
     if (this.connections.size === 0) {
-      throw new Error("No plugin connected. Open a Figma file and run the bridge plugin.");
+      throw new Error(
+        "No plugin connected. Open a Figma file and run the bridge plugin."
+      );
     }
 
     if (this.connections.size === 1) {
@@ -127,7 +141,7 @@ export class Bridge {
 
     const files = this.listConnectedFiles();
     throw new Error(
-      `Multiple files connected. Specify a fileKey to choose which file to query. Connected files: ${files.map(f => `"${f.fileName}" (fileKey: ${f.fileKey})`).join(", ")}. Use the list_files tool to see all connected files.`
+      `Multiple files connected. Specify a fileKey to choose which file to query. Connected files: ${files.map((f) => `"${f.fileName}" (fileKey: ${f.fileKey})`).join(", ")}. Use the list_files tool to see all connected files.`
     );
   }
 
@@ -138,7 +152,11 @@ export class Bridge {
     }));
   }
 
-  send(requestType: string, nodeIds?: string[], fileKey?: string): Promise<BridgeResponse> {
+  send(
+    requestType: string,
+    nodeIds?: string[],
+    fileKey?: string
+  ): Promise<BridgeResponse> {
     return this.sendWithParams(requestType, nodeIds, undefined, fileKey);
   }
 

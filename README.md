@@ -113,6 +113,7 @@ The bridge serializes comprehensive style data for each node:
 
 | Tool | Description |
 |------|-------------|
+| `list_files` | List all connected Figma files (supports multi-file workflows) |
 | `get_document` | Get the current Figma page document tree |
 | `get_selection` | Get the currently selected nodes in Figma |
 | `get_node` | Get a specific Figma node by ID (colon format, e.g. `4029:12345`) |
@@ -122,6 +123,8 @@ The bridge serializes comprehensive style data for each node:
 | `get_variable_defs` | Get all variable collections, modes, and values (design tokens) |
 | `get_screenshot` | Export nodes as PNG/SVG/JPG/PDF (base64-encoded) |
 | `save_screenshots` | Export and save screenshots directly to the local filesystem |
+
+All tools accept an optional `fileKey` parameter when multiple Figma files are connected. Use `list_files` to discover connected files and their keys.
 
 ## Local development
 

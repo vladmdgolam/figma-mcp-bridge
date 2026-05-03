@@ -79,6 +79,7 @@ export default function App() {
     };
   }, []);
 
+  // Connect/reconnect WebSocket when fileKey changes
   useEffect(() => {
     if (!status.fileKey) return;
 
