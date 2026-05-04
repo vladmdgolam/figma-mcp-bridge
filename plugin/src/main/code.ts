@@ -13,6 +13,7 @@ type RequestType =
   | "set_text_content"
   | "set_text_properties"
   | "set_node_properties"
+  | "set_solid_fill"
   | "set_gradient_fill"
   | "create_frame"
   | "create_text"
@@ -160,19 +161,27 @@ const parseHexColor = (hex: string): RGB => {
 const setSolidFill = (
   node: SceneNode,
   fillHex: string,
-  fillOpacity?: number
+  fillOpacity?: number,
+  target: "fill" | "stroke" = "fill"
 ): void => {
+  const paint: SolidPaint = {
+    type: "SOLID",
+    color: parseHexColor(fillHex),
+    opacity: fillOpacity ?? 1,
+  };
+
+  if (target === "stroke") {
+    if (!("strokes" in node)) {
+      throw new Error(`Node does not support strokes: ${node.id}`);
+    }
+    (node as GeometryMixin & { strokes: ReadonlyArray<Paint> }).strokes = [paint];
+    return;
+  }
+
   if (!("fills" in node)) {
     throw new Error(`Node does not support fills: ${node.id}`);
   }
-
-  node.fills = [
-    {
-      type: "SOLID",
-      color: parseHexColor(fillHex),
-      opacity: fillOpacity ?? 1,
-    },
-  ];
+  (node as GeometryMixin & { fills: ReadonlyArray<Paint> }).fills = [paint];
 };
 
 type GradientStopInput = { position: number; hex: string; opacity?: number };
@@ -303,6 +312,7 @@ const EDIT_REQUEST_TYPES = new Set<RequestType>([
   "set_text_content",
   "set_text_properties",
   "set_node_properties",
+  "set_solid_fill",
   "set_gradient_fill",
   "create_frame",
   "create_text",
@@ -825,20 +835,6 @@ const handleRequest = async (
           applied.cornerRadius = node.cornerRadius;
         }
 
-        if (params.solidFillOpacity !== undefined && params.solidFillHex === undefined) {
-          throw new Error("solidFillHex is required when solidFillOpacity is provided");
-        }
-
-        if (typeof params.solidFillHex === "string") {
-          const fillOpacity =
-            typeof params.solidFillOpacity === "number"
-              ? params.solidFillOpacity
-              : undefined;
-          setSolidFill(node, params.solidFillHex, fillOpacity);
-          applied.solidFillHex = params.solidFillHex;
-          applied.solidFillOpacity = fillOpacity ?? 1;
-        }
-
         return {
           type: request.type,
           requestId: request.requestId,
@@ -846,6 +842,38 @@ const handleRequest = async (
             nodeId: node.id,
             nodeName: node.name,
             applied,
+          },
+        };
+      }
+      case "set_solid_fill": {
+        const nodeId = request.nodeIds && request.nodeIds[0];
+        if (!nodeId) {
+          throw new Error("nodeIds is required for set_solid_fill");
+        }
+
+        const node = await getSceneNodeById(nodeId);
+        const params = request.params ?? {};
+
+        if (typeof params.hex !== "string") {
+          throw new Error("hex is required");
+        }
+        const target = params.target === "stroke" ? "stroke" : "fill";
+        const opacity =
+          typeof params.opacity === "number" ? params.opacity : undefined;
+
+        setSolidFill(node, params.hex, opacity, target);
+
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            nodeId: node.id,
+            nodeName: node.name,
+            applied: {
+              target,
+              hex: params.hex,
+              opacity: opacity ?? 1,
+            },
           },
         };
       }

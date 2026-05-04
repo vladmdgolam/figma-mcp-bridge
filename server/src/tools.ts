@@ -11,6 +11,7 @@ import {
   createTextInput,
   setNodePropertiesInput,
   setGradientFillInput,
+  setSolidFillInput,
   setTextPropertiesShape,
   setTextPropertiesInput,
   toolInputSchemas,
@@ -221,11 +222,22 @@ export function registerTools(
 
   server.tool(
     "set_node_properties",
-    "Patch common node properties such as name, position, size, visibility, opacity, corner radius, and solid fill color. Only supported properties for the target node type may be changed. When multiple files are connected, specify fileKey.",
+    "Patch common node properties such as name, position, size, visibility, opacity, and corner radius. Only supported properties for the target node type may be changed. Use set_solid_fill or set_gradient_fill to change paints. When multiple files are connected, specify fileKey.",
     setNodePropertiesInput.shape,
     async ({ nodeId, fileKey, ...properties }): Promise<ToolResult> => {
       return renderResponse(() =>
         node.sendWithParams("set_node_properties", [nodeId], properties, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "set_solid_fill",
+    "Replace a node's fill (or stroke) with a single solid paint. Provide a hex color and optional paint opacity. Use set_gradient_fill for gradient paints.",
+    setSolidFillInput.shape,
+    async ({ nodeId, fileKey, ...params }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("set_solid_fill", [nodeId], params, fileKey)
       );
     }
   );

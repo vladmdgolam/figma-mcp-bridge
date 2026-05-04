@@ -89,15 +89,22 @@ export const setNodePropertiesInput = z.object({
     .min(0)
     .optional()
     .describe("Optional corner radius"),
-  solidFillHex: hexColor
-    .optional()
-    .describe("Optional solid fill color as hex"),
-  solidFillOpacity: z
+  fileKey: fileKeyField,
+});
+
+export const setSolidFillInput = z.object({
+  nodeId: figmaNodeId.describe("The node ID to update"),
+  hex: hexColor.describe("Solid color as hex (e.g. '#FFAA00')"),
+  opacity: z
     .number()
     .min(0)
     .max(1)
     .optional()
-    .describe("Optional solid fill opacity from 0 to 1"),
+    .describe("Optional paint opacity from 0 to 1 (default 1)"),
+  target: z
+    .enum(["fill", "stroke"])
+    .optional()
+    .describe("Apply to fills or strokes (default fill)"),
   fileKey: fileKeyField,
 });
 
@@ -366,27 +373,21 @@ export const toolInputSchemas = {
 
   set_gradient_fill: setGradientFillInput,
 
-  set_node_properties: setNodePropertiesInput
-    .refine(
-      (value) =>
-        value.name !== undefined ||
-        value.x !== undefined ||
-        value.y !== undefined ||
-        value.width !== undefined ||
-        value.height !== undefined ||
-        value.rotation !== undefined ||
-        value.opacity !== undefined ||
-        value.visible !== undefined ||
-        value.cornerRadius !== undefined ||
-        value.solidFillHex !== undefined ||
-        value.solidFillOpacity !== undefined,
-      "At least one property must be provided",
-    )
-    .refine(
-      (value) =>
-        value.solidFillOpacity === undefined || value.solidFillHex !== undefined,
-      "solidFillHex is required when solidFillOpacity is provided",
-    ),
+  set_solid_fill: setSolidFillInput,
+
+  set_node_properties: setNodePropertiesInput.refine(
+    (value) =>
+      value.name !== undefined ||
+      value.x !== undefined ||
+      value.y !== undefined ||
+      value.width !== undefined ||
+      value.height !== undefined ||
+      value.rotation !== undefined ||
+      value.opacity !== undefined ||
+      value.visible !== undefined ||
+      value.cornerRadius !== undefined,
+    "At least one property must be provided",
+  ),
 
   create_frame: createFrameInput
     .refine(
@@ -485,6 +486,7 @@ const rpcToArgs: Record<
   set_text_properties: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   set_node_properties: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   set_gradient_fill: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
+  set_solid_fill: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   create_frame: (_nodeIds, params) => ({ ...params }),
   create_text: (_nodeIds, params) => ({ ...params }),
   create_shape: (_nodeIds, params) => ({ ...params }),
