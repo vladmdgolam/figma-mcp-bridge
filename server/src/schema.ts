@@ -244,15 +244,6 @@ export const setNodePropertiesInput = z.object({
     .min(0)
     .optional()
     .describe("Optional corner radius"),
-  solidFillHex: hexColor
-    .optional()
-    .describe("Optional solid fill color as hex"),
-  solidFillOpacity: z
-    .number()
-    .min(0)
-    .max(1)
-    .optional()
-    .describe("Optional solid fill opacity from 0 to 1"),
   fileKey: fileKeyField,
 });
 
@@ -594,27 +585,19 @@ export const toolInputSchemas = {
     "At least one auto-layout property must be provided"
   ),
 
-  set_node_properties: setNodePropertiesInput
-    .refine(
-      (value) =>
-        value.name !== undefined ||
-        value.x !== undefined ||
-        value.y !== undefined ||
-        value.width !== undefined ||
-        value.height !== undefined ||
-        value.rotation !== undefined ||
-        value.opacity !== undefined ||
-        value.visible !== undefined ||
-        value.cornerRadius !== undefined ||
-        value.solidFillHex !== undefined ||
-        value.solidFillOpacity !== undefined,
-      "At least one property must be provided",
-    )
-    .refine(
-      (value) =>
-        value.solidFillOpacity === undefined || value.solidFillHex !== undefined,
-      "solidFillHex is required when solidFillOpacity is provided",
-    ),
+  set_node_properties: setNodePropertiesInput.refine(
+    (value) =>
+      value.name !== undefined ||
+      value.x !== undefined ||
+      value.y !== undefined ||
+      value.width !== undefined ||
+      value.height !== undefined ||
+      value.rotation !== undefined ||
+      value.opacity !== undefined ||
+      value.visible !== undefined ||
+      value.cornerRadius !== undefined,
+    "At least one property must be provided",
+  ),
 
   create_frame: createFrameInput
     .refine(

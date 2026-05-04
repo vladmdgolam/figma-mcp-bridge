@@ -269,7 +269,7 @@ export function registerTools(
 
   server.tool(
     "set_node_properties",
-    "Patch common node properties such as name, position, size, visibility, opacity, corner radius, and solid fill color. Only supported properties for the target node type may be changed.",
+    "Patch common node properties such as name, position, size, visibility, opacity, and corner radius. Only supported properties for the target node type may be changed. Use set_solid_fill or set_gradient_fill to change paints. When multiple files are connected, specify fileKey.",
     setNodePropertiesInput.shape,
     async ({ nodeId, fileKey, ...properties }): Promise<ToolResult> => {
       return renderResponse(() =>
