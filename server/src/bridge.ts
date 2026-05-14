@@ -7,6 +7,7 @@ interface PendingRequest {
   resolve: (resp: BridgeResponse) => void;
   reject: (err: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
+  ws: WebSocket;
 }
 
 interface ConnectionEntry {
@@ -83,6 +84,10 @@ export class Bridge {
         console.error(`Plugin disconnected: ${fileName} (${fileKey})`);
         this.broadcastFiles();
       }
+      this.rejectPendingForSocket(
+        ws,
+        `Plugin disconnected: ${fileName} (${fileKey})`
+      );
     });
 
     ws.on("error", (err) => {
@@ -92,6 +97,10 @@ export class Bridge {
         this.connections.delete(fileKey);
         this.broadcastFiles();
       }
+      this.rejectPendingForSocket(
+        ws,
+        `Plugin connection error (${fileName}): ${err.message}`
+      );
     });
   }
 
@@ -104,6 +113,16 @@ export class Bridge {
     for (const entry of this.connections.values()) {
       if (entry.ws.readyState === WebSocket.OPEN) {
         entry.ws.send(payload);
+      }
+    }
+  }
+
+  private rejectPendingForSocket(ws: WebSocket, reason: string): void {
+    for (const [id, p] of this.pending) {
+      if (p.ws === ws) {
+        clearTimeout(p.timeout);
+        this.pending.delete(id);
+        p.reject(new Error(reason));
       }
     }
   }
@@ -197,7 +216,7 @@ export class Bridge {
         reject(new Error("Request timed out"));
       }, 30_000);
 
-      this.pending.set(requestId, { resolve, reject, timeout });
+      this.pending.set(requestId, { resolve, reject, timeout, ws: conn });
 
       conn.send(JSON.stringify(request), (err) => {
         if (err) {
