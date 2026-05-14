@@ -45,6 +45,22 @@ const gradientTransform = z
     "2x3 affine matrix [[a,b,tx],[c,d,ty]] mapping the unit gradient onto the shape (Figma's gradientTransform). Defaults to identity (horizontal left→right)."
   );
 
+export const setSolidFillInput = z.object({
+  nodeId: figmaNodeId.describe("The node ID to update"),
+  hex: hexColor.describe("Solid color as hex (e.g. '#FFAA00')"),
+  opacity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Optional paint opacity from 0 to 1 (default 1)"),
+  target: z
+    .enum(["fill", "stroke"])
+    .optional()
+    .describe("Apply to fills or strokes (default fill)"),
+  fileKey: fileKeyField,
+});
+
 export const setGradientFillInput = z.object({
   nodeId: figmaNodeId.describe("The node ID to update"),
   gradientType: z
@@ -408,6 +424,8 @@ export const toolInputSchemas = {
 
   set_gradient_fill: setGradientFillInput,
 
+  set_solid_fill: setSolidFillInput,
+
   set_node_properties: setNodePropertiesInput
     .refine(
       (value) =>
@@ -530,6 +548,7 @@ const rpcToArgs: Record<
   set_text_properties: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   set_node_properties: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   set_gradient_fill: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
+  set_solid_fill: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   create_frame: (_nodeIds, params) => ({ ...params }),
   create_text: (_nodeIds, params) => ({ ...params }),
   create_shape: (_nodeIds, params) => ({ ...params }),

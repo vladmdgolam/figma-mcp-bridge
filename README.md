@@ -54,6 +54,8 @@ Open a Figma file, run the plugin, and start prompting your AI tool. The MCP ser
 | `set_text_content` | Replace the contents of a text node |
 | `set_text_properties` | Patch font, size, alignment, auto-resize, color, and bounds on a text node |
 | `set_node_properties` | Patch common node properties like name, position, size, visibility, opacity, radius, and solid fill |
+| `set_solid_fill` | Replace a node's fill or stroke with a single solid paint |
+| `set_gradient_fill` | Replace a node's fill or stroke with a linear/radial/angular/diamond gradient |
 | `create_frame` | Create a new frame, optionally under a parent |
 | `create_text` | Create a new text node |
 | `create_shape` | Create a rectangle, ellipse, or line |

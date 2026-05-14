@@ -13,6 +13,7 @@ type RequestType =
   | "set_text_content"
   | "set_text_properties"
   | "set_node_properties"
+  | "set_solid_fill"
   | "set_gradient_fill"
   | "create_frame"
   | "create_text"
@@ -772,6 +773,55 @@ const handleRequest = async (
             nodeId: node.id,
             nodeName: node.name,
             applied,
+          },
+        };
+      }
+      case "set_solid_fill": {
+        const nodeId = request.nodeIds && request.nodeIds[0];
+        if (!nodeId) {
+          throw new Error("nodeIds is required for set_solid_fill");
+        }
+
+        const node = await getSceneNodeById(nodeId);
+        const params = request.params ?? {};
+
+        if (typeof params.hex !== "string") {
+          throw new Error("hex is required for set_solid_fill");
+        }
+
+        const target = params.target === "stroke" ? "stroke" : "fill";
+        if (target === "fill" && !("fills" in node)) {
+          throw new Error(`Node does not support fills: ${node.id}`);
+        }
+        if (target === "stroke" && !("strokes" in node)) {
+          throw new Error(`Node does not support strokes: ${node.id}`);
+        }
+
+        const opacity =
+          typeof params.opacity === "number" ? params.opacity : undefined;
+        const paint: SolidPaint = {
+          type: "SOLID",
+          color: parseHexColor(params.hex),
+          opacity: opacity ?? 1,
+        };
+
+        if (target === "fill") {
+          (node as GeometryMixin & { fills: ReadonlyArray<Paint> }).fills = [paint];
+        } else {
+          (node as GeometryMixin & { strokes: ReadonlyArray<Paint> }).strokes = [paint];
+        }
+
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            nodeId: node.id,
+            nodeName: node.name,
+            applied: {
+              target,
+              hex: params.hex,
+              opacity: paint.opacity,
+            },
           },
         };
       }

@@ -11,6 +11,7 @@ import {
   createTextInput,
   setNodePropertiesInput,
   setGradientFillInput,
+  setSolidFillInput,
   setTextPropertiesShape,
   setTextPropertiesInput,
   toolInputSchemas,
@@ -270,6 +271,17 @@ export function registerTools(
     async ({ nodeId, fileKey, ...properties }): Promise<ToolResult> => {
       return renderResponse(() =>
         node.sendWithParams("set_node_properties", [nodeId], properties, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "set_solid_fill",
+    "Replace a node's fill (or stroke) with a single solid paint. Provide a hex color and optional paint opacity. Use set_gradient_fill for gradient paints.",
+    setSolidFillInput.shape,
+    async ({ nodeId, fileKey, ...params }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("set_solid_fill", [nodeId], params, fileKey)
       );
     }
   );
