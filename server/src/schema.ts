@@ -45,6 +45,145 @@ const gradientTransform = z
     "2x3 affine matrix [[a,b,tx],[c,d,ty]] mapping the unit gradient onto the shape (Figma's gradientTransform). Defaults to identity (horizontal left→right)."
   );
 
+const blendMode = z.enum([
+  "PASS_THROUGH",
+  "NORMAL",
+  "DARKEN",
+  "MULTIPLY",
+  "LINEAR_BURN",
+  "COLOR_BURN",
+  "LIGHTEN",
+  "SCREEN",
+  "LINEAR_DODGE",
+  "COLOR_DODGE",
+  "OVERLAY",
+  "SOFT_LIGHT",
+  "HARD_LIGHT",
+  "DIFFERENCE",
+  "EXCLUSION",
+  "HUE",
+  "SATURATION",
+  "COLOR",
+  "LUMINOSITY",
+]);
+
+const shadowEffect = z.object({
+  type: z.enum(["DROP_SHADOW", "INNER_SHADOW"]),
+  color: hexColor.describe("Shadow color as hex"),
+  opacity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Shadow alpha 0..1 (default 1)"),
+  offset: z
+    .object({
+      x: z.number(),
+      y: z.number(),
+    })
+    .describe("Shadow offset in pixels"),
+  radius: z.number().min(0).describe("Blur radius (>= 0)"),
+  spread: z
+    .number()
+    .optional()
+    .describe(
+      "Expand/contract distance (default 0). Only honored on rects/ellipses, or on frames/components/instances with visible fills and clipsContent."
+    ),
+  blendMode: blendMode.optional().describe("Default NORMAL"),
+  visible: z.boolean().optional().describe("Default true"),
+});
+
+const blurEffect = z.object({
+  type: z.enum(["LAYER_BLUR", "BACKGROUND_BLUR"]),
+  radius: z.number().min(0).describe("Blur radius (>= 0)"),
+  visible: z.boolean().optional().describe("Default true"),
+});
+
+export const setEffectsInput = z.object({
+  nodeId: figmaNodeId.describe("The node ID to update"),
+  effects: z
+    .array(z.union([shadowEffect, blurEffect]))
+    .describe(
+      "Full replacement list of effects. Pass [] to clear all effects. Each entry is a drop/inner shadow or a layer/background blur."
+    ),
+  fileKey: fileKeyField,
+});
+
+export const setStrokePropertiesInput = z.object({
+  nodeId: figmaNodeId.describe("The node ID to update"),
+  strokeWeight: z
+    .number()
+    .min(0)
+    .optional()
+    .describe("Stroke thickness in pixels"),
+  strokeAlign: z
+    .enum(["INSIDE", "OUTSIDE", "CENTER"])
+    .optional()
+    .describe("How the stroke is positioned relative to the geometry edge"),
+  dashPattern: z
+    .array(z.number().min(0))
+    .optional()
+    .describe(
+      "Dash pattern as [dash, gap, dash, gap, ...] in pixels. Pass [] for a solid stroke."
+    ),
+  strokeCap: z
+    .enum([
+      "NONE",
+      "ROUND",
+      "SQUARE",
+      "ARROW_LINES",
+      "ARROW_EQUILATERAL",
+    ])
+    .optional()
+    .describe("End-cap style (only meaningful on open paths/lines)"),
+  strokeJoin: z
+    .enum(["MITER", "BEVEL", "ROUND"])
+    .optional()
+    .describe("Corner join style"),
+  fileKey: fileKeyField,
+});
+
+export const setAutoLayoutInput = z.object({
+  nodeId: figmaNodeId.describe("The node ID to update (must be a frame)"),
+  layoutMode: z
+    .enum(["NONE", "HORIZONTAL", "VERTICAL"])
+    .optional()
+    .describe("Auto-layout direction. 'NONE' disables auto-layout."),
+  itemSpacing: z
+    .number()
+    .optional()
+    .describe("Gap between children along the primary axis (pixels)"),
+  counterAxisSpacing: z
+    .number()
+    .optional()
+    .describe("Gap between wrapped rows/columns (only when layoutWrap=WRAP)"),
+  paddingTop: z.number().min(0).optional(),
+  paddingRight: z.number().min(0).optional(),
+  paddingBottom: z.number().min(0).optional(),
+  paddingLeft: z.number().min(0).optional(),
+  primaryAxisAlignItems: z
+    .enum(["MIN", "MAX", "CENTER", "SPACE_BETWEEN"])
+    .optional()
+    .describe("Alignment along the primary axis"),
+  counterAxisAlignItems: z
+    .enum(["MIN", "MAX", "CENTER", "BASELINE"])
+    .optional()
+    .describe("Alignment along the counter axis"),
+  primaryAxisSizingMode: z
+    .enum(["FIXED", "AUTO"])
+    .optional()
+    .describe("AUTO = hug contents along primary axis"),
+  counterAxisSizingMode: z
+    .enum(["FIXED", "AUTO"])
+    .optional()
+    .describe("AUTO = hug contents along counter axis"),
+  layoutWrap: z
+    .enum(["NO_WRAP", "WRAP"])
+    .optional()
+    .describe("Allow children to wrap onto multiple rows/columns"),
+  fileKey: fileKeyField,
+});
+
 export const setSolidFillInput = z.object({
   nodeId: figmaNodeId.describe("The node ID to update"),
   hex: hexColor.describe("Solid color as hex (e.g. '#FFAA00')"),
@@ -426,6 +565,35 @@ export const toolInputSchemas = {
 
   set_solid_fill: setSolidFillInput,
 
+  set_effects: setEffectsInput,
+
+  set_stroke_properties: setStrokePropertiesInput.refine(
+    (value) =>
+      value.strokeWeight !== undefined ||
+      value.strokeAlign !== undefined ||
+      value.dashPattern !== undefined ||
+      value.strokeCap !== undefined ||
+      value.strokeJoin !== undefined,
+    "At least one stroke property must be provided"
+  ),
+
+  set_auto_layout: setAutoLayoutInput.refine(
+    (value) =>
+      value.layoutMode !== undefined ||
+      value.itemSpacing !== undefined ||
+      value.counterAxisSpacing !== undefined ||
+      value.paddingTop !== undefined ||
+      value.paddingRight !== undefined ||
+      value.paddingBottom !== undefined ||
+      value.paddingLeft !== undefined ||
+      value.primaryAxisAlignItems !== undefined ||
+      value.counterAxisAlignItems !== undefined ||
+      value.primaryAxisSizingMode !== undefined ||
+      value.counterAxisSizingMode !== undefined ||
+      value.layoutWrap !== undefined,
+    "At least one auto-layout property must be provided"
+  ),
+
   set_node_properties: setNodePropertiesInput
     .refine(
       (value) =>
@@ -549,6 +717,9 @@ const rpcToArgs: Record<
   set_node_properties: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   set_gradient_fill: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   set_solid_fill: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
+  set_effects: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
+  set_stroke_properties: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
+  set_auto_layout: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
   create_frame: (_nodeIds, params) => ({ ...params }),
   create_text: (_nodeIds, params) => ({ ...params }),
   create_shape: (_nodeIds, params) => ({ ...params }),
