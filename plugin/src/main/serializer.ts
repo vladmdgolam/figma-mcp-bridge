@@ -64,6 +64,11 @@ type SerializedStyles = {
   opacity?: number;
   blendMode?: string;
   visible?: boolean;
+  // Layer-as-mask flags (Figma "Use as mask" / mask groups). isMask=true
+  // means the layer's alpha (or luminance, per maskType) is applied as a
+  // mask to the sibling layers above it inside the same parent.
+  isMask?: boolean;
+  maskType?: string;
   fills?: SerializedPaint[] | "mixed";
   strokes?: SerializedPaint[] | "mixed";
   strokeWeight?: number | "mixed";
@@ -371,6 +376,16 @@ const serializeStyles = (node: SceneNode): SerializedStyles => {
   }
   if ("visible" in node && node.visible === false) {
     styles.visible = false;
+  }
+  // Mask flags — `isMask` is true on the bottom child of a mask group (or
+  // any layer with "Use as mask" toggled). `maskType` further says how it
+  // masks: ALPHA, VECTOR, or LUMINANCE. Only emit when actually a mask so
+  // typical layers stay terse.
+  if ("isMask" in node && (node as { isMask: boolean }).isMask) {
+    styles.isMask = true;
+    if ("maskType" in node) {
+      styles.maskType = (node as { maskType: string }).maskType;
+    }
   }
 
   if ("fills" in node) {
