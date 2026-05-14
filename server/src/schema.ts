@@ -162,6 +162,42 @@ const blurEffect = z.object({
   visible: z.boolean().optional().describe("Default true"),
 });
 
+export const setSelectionInput = z.object({
+  nodeIds: z
+    .array(figmaNodeId)
+    .describe("Node IDs to select. Pass [] to clear the selection."),
+  fileKey: fileKeyField,
+});
+
+export const scrollAndZoomIntoViewInput = z.object({
+  nodeIds: z
+    .array(figmaNodeId)
+    .min(1)
+    .describe("Node IDs to frame in the viewport"),
+  fileKey: fileKeyField,
+});
+
+export const groupNodesInput = z.object({
+  nodeIds: z
+    .array(figmaNodeId)
+    .min(1)
+    .describe("Node IDs to group. Must share a common parent."),
+  parentId: figmaNodeId
+    .optional()
+    .describe(
+      "Optional explicit parent for the new group. Defaults to the shared parent of the input nodes."
+    ),
+  name: z.string().optional().describe("Optional name for the new group"),
+  fileKey: fileKeyField,
+});
+
+export const ungroupNodeInput = z.object({
+  nodeId: figmaNodeId.describe(
+    "Group or frame to ungroup. Children move up to its parent and the wrapper is removed."
+  ),
+  fileKey: fileKeyField,
+});
+
 export const setEffectsInput = z.object({
   nodeId: figmaNodeId.describe("The node ID to update"),
   effects: z
@@ -594,6 +630,14 @@ export const toolInputSchemas = {
     fileKey: fileKeyField,
   }),
 
+  group_nodes: groupNodesInput,
+
+  ungroup_node: ungroupNodeInput,
+
+  set_selection: setSelectionInput,
+
+  scroll_and_zoom_into_view: scrollAndZoomIntoViewInput,
+
   delete_nodes: z.object({
     nodeIds: z
       .array(figmaNodeId)
@@ -672,6 +716,10 @@ const rpcToArgs: Record<
   create_image: (_nodeIds, params) => ({ ...params }),
   duplicate_nodes: (nodeIds, params) => ({ nodeIds, ...params }),
   reparent_nodes: (nodeIds, params) => ({ nodeIds, ...params }),
+  group_nodes: (nodeIds, params) => ({ nodeIds, ...params }),
+  ungroup_node: (nodeIds, params) => ({ nodeId: nodeIds?.[0], ...params }),
+  set_selection: (nodeIds, params) => ({ nodeIds, ...params }),
+  scroll_and_zoom_into_view: (nodeIds, params) => ({ nodeIds, ...params }),
   delete_nodes: (nodeIds, params) => ({ nodeIds, ...params }),
   save_screenshots: (_nodeIds, params) => ({ ...params }),
 };

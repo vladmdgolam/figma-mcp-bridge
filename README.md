@@ -90,6 +90,10 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `create_image` | Create an image-backed rectangle from a local path, URL, or data URI |
 | `duplicate_nodes` | Duplicate nodes in place |
 | `reparent_nodes` | Move nodes into another parent |
+| `group_nodes` | Wrap a list of nodes (sharing a parent) in a new group |
+| `ungroup_node` | Ungroup a group or frame — children move up to its parent |
+| `set_selection` | Set the page selection to a list of node IDs (works in Dev Mode) |
+| `scroll_and_zoom_into_view` | Frame the viewport around the given nodes (works in Dev Mode) |
 | `delete_nodes` | Delete nodes with explicit confirmation |
 
 All tools accept an optional `fileKey` parameter when multiple Figma files are connected. Use `list_files` to discover connected files and their keys.
@@ -107,7 +111,7 @@ All tools accept an optional `fileKey` parameter when multiple Figma files are c
 
 With the current write surface, an agent can build a basic slide deck in a new empty Figma file: create slide frames, style titles and body copy, lay out rectangles/ellipses/lines for cards and dividers, duplicate slide templates, reparent content into the right frame, and adjust common geometry/visual properties — including solid/gradient paints, shadows and blurs, stroke geometry, and auto-layout configuration.
 
-The current version is intentionally limited — no components/instances, no variables/styles authoring, no per-segment text styling, no vector boolean operations or group/ungroup yet.
+The current version is intentionally limited — no components/instances, no variables/styles authoring, no per-segment text styling, and no vector boolean operations yet.
 
 ## Local development
 

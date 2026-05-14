@@ -15,6 +15,10 @@ import {
   setEffectsInput,
   setStrokePropertiesInput,
   setAutoLayoutInput,
+  setSelectionInput,
+  scrollAndZoomIntoViewInput,
+  groupNodesInput,
+  ungroupNodeInput,
   setTextPropertiesShape,
   setTextPropertiesInput,
   toolInputSchemas,
@@ -369,6 +373,50 @@ export function registerTools(
     async ({ nodeIds, parentId, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
         node.sendWithParams("reparent_nodes", nodeIds, { parentId }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "group_nodes",
+    "Wrap a list of nodes in a new group. Nodes must share a common parent (or supply parentId explicitly). Returns the new group's node ID.",
+    groupNodesInput.shape,
+    async ({ nodeIds, fileKey, ...params }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("group_nodes", nodeIds, params, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "ungroup_node",
+    "Ungroup a group or frame — its children move up to its parent and the wrapper is removed. Returns the IDs of the orphaned children in their new parent.",
+    ungroupNodeInput.shape,
+    async ({ nodeId, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("ungroup_node", [nodeId], undefined, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "set_selection",
+    "Set the current page selection to a list of node IDs. Pass an empty array to clear the selection. Works in both design editor and Dev Mode.",
+    setSelectionInput.shape,
+    async ({ nodeIds, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("set_selection", nodeIds, undefined, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "scroll_and_zoom_into_view",
+    "Scroll and zoom the Figma viewport so the given nodes are framed in view. Works in both design editor and Dev Mode.",
+    scrollAndZoomIntoViewInput.shape,
+    async ({ nodeIds, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("scroll_and_zoom_into_view", nodeIds, undefined, fileKey)
       );
     }
   );

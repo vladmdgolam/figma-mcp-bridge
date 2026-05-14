@@ -24,6 +24,10 @@ type RequestType =
   | "create_image"
   | "duplicate_nodes"
   | "reparent_nodes"
+  | "group_nodes"
+  | "ungroup_node"
+  | "set_selection"
+  | "scroll_and_zoom_into_view"
   | "delete_nodes";
 
 type ServerRequest = {
@@ -326,6 +330,8 @@ const EDIT_REQUEST_TYPES = new Set<RequestType>([
   "create_image",
   "duplicate_nodes",
   "reparent_nodes",
+  "group_nodes",
+  "ungroup_node",
   "delete_nodes",
 ]);
 
@@ -1486,6 +1492,111 @@ const handleRequest = async (
           data: {
             movedCount: moved.length,
             moved,
+          },
+        };
+      }
+      case "group_nodes": {
+        if (!request.nodeIds || request.nodeIds.length === 0) {
+          throw new Error("nodeIds is required for group_nodes");
+        }
+
+        const nodes = await Promise.all(
+          request.nodeIds.map((nodeId) => getSceneNodeById(nodeId))
+        );
+
+        const explicitParentId = request.params?.parentId;
+        let parent: BaseNode & ChildrenMixin;
+        if (typeof explicitParentId === "string") {
+          parent = await getParentNodeById(explicitParentId);
+        } else {
+          const parents = new Set(nodes.map((n) => n.parent?.id));
+          if (parents.size !== 1 || parents.has(undefined)) {
+            throw new Error(
+              "group_nodes requires all nodes to share a parent, or pass parentId explicitly"
+            );
+          }
+          const sharedParent = nodes[0].parent;
+          if (!sharedParent || !supportsChildren(sharedParent)) {
+            throw new Error("Shared parent does not support children");
+          }
+          parent = sharedParent;
+        }
+
+        const group = figma.group(nodes, parent);
+        const name = request.params?.name;
+        if (typeof name === "string") {
+          group.name = name;
+        }
+
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            nodeId: group.id,
+            nodeName: group.name,
+            parentId: group.parent?.id,
+            childIds: group.children.map((c) => c.id),
+          },
+        };
+      }
+      case "ungroup_node": {
+        const nodeId = request.nodeIds && request.nodeIds[0];
+        if (!nodeId) {
+          throw new Error("nodeIds is required for ungroup_node");
+        }
+
+        const node = await getSceneNodeById(nodeId);
+        if (node.type !== "GROUP" && node.type !== "FRAME") {
+          throw new Error(
+            `ungroup_node only works on GROUP or FRAME nodes, got ${node.type}`
+          );
+        }
+
+        const parentId = node.parent?.id;
+        const orphans = figma.ungroup(node as GroupNode | FrameNode);
+
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            parentId,
+            orphanIds: orphans.map((o) => o.id),
+          },
+        };
+      }
+      case "set_selection": {
+        const ids = request.nodeIds ?? [];
+        const nodes: SceneNode[] = [];
+        for (const id of ids) {
+          nodes.push(await getSceneNodeById(id));
+        }
+        figma.currentPage.selection = nodes;
+
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            selectedCount: nodes.length,
+            selectedIds: nodes.map((n) => n.id),
+          },
+        };
+      }
+      case "scroll_and_zoom_into_view": {
+        if (!request.nodeIds || request.nodeIds.length === 0) {
+          throw new Error("nodeIds is required for scroll_and_zoom_into_view");
+        }
+
+        const nodes = await Promise.all(
+          request.nodeIds.map((nodeId) => getSceneNodeById(nodeId))
+        );
+        figma.viewport.scrollAndZoomIntoView(nodes);
+
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            framedCount: nodes.length,
+            framedIds: nodes.map((n) => n.id),
           },
         };
       }

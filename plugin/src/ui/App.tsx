@@ -25,6 +25,10 @@ type RequestType =
   | "create_image"
   | "duplicate_nodes"
   | "reparent_nodes"
+  | "group_nodes"
+  | "ungroup_node"
+  | "set_selection"
+  | "scroll_and_zoom_into_view"
   | "delete_nodes";
 
 type ServerRequest = {
