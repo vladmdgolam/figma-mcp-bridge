@@ -78,7 +78,12 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 | `set_node_visibility` | Show or hide specific nodes |
 | `set_text_content` | Replace the contents of a text node |
 | `set_text_properties` | Patch font, size, alignment, auto-resize, color, and bounds on a text node |
-| `set_node_properties` | Patch common node properties like name, position, size, visibility, opacity, radius, and solid fill |
+| `set_node_properties` | Patch common node properties: name, position, size, visibility, opacity, corner radius |
+| `set_solid_fill` | Replace a node's fill or stroke with a single solid paint |
+| `set_gradient_fill` | Replace a node's fill or stroke with a linear/radial/angular/diamond gradient |
+| `set_effects` | Replace a node's effects list (drop/inner shadows, layer/background blurs) |
+| `set_stroke_properties` | Patch stroke weight, align, dash pattern, cap, and join |
+| `set_auto_layout` | Configure auto-layout direction, padding, gap, alignment, sizing, and wrap |
 | `create_frame` | Create a new frame, optionally under a parent |
 | `create_text` | Create a new text node |
 | `create_shape` | Create a rectangle, ellipse, or line |
@@ -100,9 +105,9 @@ All tools accept an optional `fileKey` parameter when multiple Figma files are c
 
 ### What You Can Build
 
-With the current write surface, an agent can build a basic slide deck in a new empty Figma file: create slide frames, style titles and body copy, lay out rectangles/ellipses/lines for cards and dividers, duplicate slide templates, reparent content into the right frame, and adjust common geometry/visual properties after the fact.
+With the current write surface, an agent can build a basic slide deck in a new empty Figma file: create slide frames, style titles and body copy, lay out rectangles/ellipses/lines for cards and dividers, duplicate slide templates, reparent content into the right frame, and adjust common geometry/visual properties — including solid/gradient paints, shadows and blurs, stroke geometry, and auto-layout configuration.
 
-The current version is intentionally limited — no components, no variables/styles authoring, no advanced auto-layout editing yet.
+The current version is intentionally limited — no components/instances, no variables/styles authoring, no per-segment text styling, no vector boolean operations or group/ungroup yet.
 
 ## Local development
 

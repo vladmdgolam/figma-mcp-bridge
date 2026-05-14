@@ -12,6 +12,9 @@ import {
   setNodePropertiesInput,
   setGradientFillInput,
   setSolidFillInput,
+  setEffectsInput,
+  setStrokePropertiesInput,
+  setAutoLayoutInput,
   setTextPropertiesShape,
   setTextPropertiesInput,
   toolInputSchemas,
@@ -249,6 +252,39 @@ export function registerTools(
     async ({ nodeId, fileKey, ...params }): Promise<ToolResult> => {
       return renderResponse(() =>
         node.sendWithParams("set_gradient_fill", [nodeId], params, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "set_effects",
+    "Replace a node's effects list (drop/inner shadows, layer/background blurs). Pass an empty array to clear all effects. Each entry mirrors the shape returned by get_node's `effects` field.",
+    setEffectsInput.shape,
+    async ({ nodeId, fileKey, ...params }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("set_effects", [nodeId], params, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "set_stroke_properties",
+    "Patch stroke geometry properties: weight, align, dash pattern, cap, join. Use set_solid_fill/set_gradient_fill with target='stroke' to set the paint itself.",
+    setStrokePropertiesInput.shape,
+    async ({ nodeId, fileKey, ...params }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("set_stroke_properties", [nodeId], params, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "set_auto_layout",
+    "Configure auto-layout on a frame: direction, gap, padding, alignment, sizing modes, wrap. Set layoutMode='NONE' to disable auto-layout on the frame.",
+    setAutoLayoutInput.shape,
+    async ({ nodeId, fileKey, ...params }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("set_auto_layout", [nodeId], params, fileKey)
       );
     }
   );

@@ -15,6 +15,9 @@ type RequestType =
   | "set_node_properties"
   | "set_solid_fill"
   | "set_gradient_fill"
+  | "set_effects"
+  | "set_stroke_properties"
+  | "set_auto_layout"
   | "create_frame"
   | "create_text"
   | "create_shape"
@@ -314,6 +317,9 @@ const EDIT_REQUEST_TYPES = new Set<RequestType>([
   "set_node_properties",
   "set_solid_fill",
   "set_gradient_fill",
+  "set_effects",
+  "set_stroke_properties",
+  "set_auto_layout",
   "create_frame",
   "create_text",
   "create_shape",
@@ -940,6 +946,253 @@ const handleRequest = async (
               gradientType: paintType,
               stops: paint.gradientStops.length,
             },
+          },
+        };
+      }
+      case "set_effects": {
+        const nodeId = request.nodeIds && request.nodeIds[0];
+        if (!nodeId) {
+          throw new Error("nodeIds is required for set_effects");
+        }
+
+        const node = await getSceneNodeById(nodeId);
+        if (!("effects" in node)) {
+          throw new Error(`Node does not support effects: ${node.id}`);
+        }
+
+        const params = request.params ?? {};
+        if (!Array.isArray(params.effects)) {
+          throw new Error("effects must be an array (pass [] to clear)");
+        }
+
+        const built = (params.effects as Array<Record<string, unknown>>).map(
+          (raw, i): Effect => {
+            const type = raw.type;
+            if (type === "DROP_SHADOW" || type === "INNER_SHADOW") {
+              if (typeof raw.color !== "string") {
+                throw new Error(`effects[${i}].color must be a hex string`);
+              }
+              const offset = raw.offset as { x?: unknown; y?: unknown } | undefined;
+              if (
+                !offset ||
+                typeof offset.x !== "number" ||
+                typeof offset.y !== "number"
+              ) {
+                throw new Error(`effects[${i}].offset must be {x,y} numbers`);
+              }
+              if (typeof raw.radius !== "number") {
+                throw new Error(`effects[${i}].radius must be a number`);
+              }
+              const rgb = parseHexColor(raw.color);
+              const alpha = typeof raw.opacity === "number" ? raw.opacity : 1;
+              return {
+                type,
+                color: { r: rgb.r, g: rgb.g, b: rgb.b, a: alpha },
+                offset: { x: offset.x, y: offset.y },
+                radius: raw.radius,
+                spread: typeof raw.spread === "number" ? raw.spread : 0,
+                visible: raw.visible === undefined ? true : Boolean(raw.visible),
+                blendMode:
+                  typeof raw.blendMode === "string"
+                    ? (raw.blendMode as BlendMode)
+                    : "NORMAL",
+              };
+            }
+            if (type === "LAYER_BLUR" || type === "BACKGROUND_BLUR") {
+              if (typeof raw.radius !== "number") {
+                throw new Error(`effects[${i}].radius must be a number`);
+              }
+              return {
+                type,
+                radius: raw.radius,
+                visible: raw.visible === undefined ? true : Boolean(raw.visible),
+              } as Effect;
+            }
+            throw new Error(`Unsupported effect type at effects[${i}]: ${String(type)}`);
+          }
+        );
+
+        (node as BlendMixin & { effects: ReadonlyArray<Effect> }).effects = built;
+
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            nodeId: node.id,
+            nodeName: node.name,
+            applied: { count: built.length },
+          },
+        };
+      }
+      case "set_stroke_properties": {
+        const nodeId = request.nodeIds && request.nodeIds[0];
+        if (!nodeId) {
+          throw new Error("nodeIds is required for set_stroke_properties");
+        }
+
+        const node = await getSceneNodeById(nodeId);
+        const params = request.params ?? {};
+        const applied: Record<string, unknown> = {};
+
+        if (typeof params.strokeWeight === "number") {
+          if (!("strokeWeight" in node)) {
+            throw new Error(`Node does not support strokeWeight: ${node.id}`);
+          }
+          (node as MinimalStrokesMixin).strokeWeight = params.strokeWeight;
+          applied.strokeWeight = params.strokeWeight;
+        }
+
+        if (
+          params.strokeAlign === "INSIDE" ||
+          params.strokeAlign === "OUTSIDE" ||
+          params.strokeAlign === "CENTER"
+        ) {
+          if (!("strokeAlign" in node)) {
+            throw new Error(`Node does not support strokeAlign: ${node.id}`);
+          }
+          (node as MinimalStrokesMixin).strokeAlign = params.strokeAlign;
+          applied.strokeAlign = params.strokeAlign;
+        }
+
+        if (Array.isArray(params.dashPattern)) {
+          if (!("dashPattern" in node)) {
+            throw new Error(`Node does not support dashPattern: ${node.id}`);
+          }
+          const pattern = (params.dashPattern as unknown[]).map((n, i) => {
+            if (typeof n !== "number" || n < 0) {
+              throw new Error(`dashPattern[${i}] must be a non-negative number`);
+            }
+            return n;
+          });
+          (node as MinimalStrokesMixin).dashPattern = pattern;
+          applied.dashPattern = pattern;
+        }
+
+        if (typeof params.strokeCap === "string") {
+          if (!("strokeCap" in node)) {
+            throw new Error(`Node does not support strokeCap: ${node.id}`);
+          }
+          (node as SceneNode & { strokeCap: StrokeCap }).strokeCap =
+            params.strokeCap as StrokeCap;
+          applied.strokeCap = params.strokeCap;
+        }
+
+        if (typeof params.strokeJoin === "string") {
+          if (!("strokeJoin" in node)) {
+            throw new Error(`Node does not support strokeJoin: ${node.id}`);
+          }
+          (node as SceneNode & { strokeJoin: StrokeJoin }).strokeJoin =
+            params.strokeJoin as StrokeJoin;
+          applied.strokeJoin = params.strokeJoin;
+        }
+
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            nodeId: node.id,
+            nodeName: node.name,
+            applied,
+          },
+        };
+      }
+      case "set_auto_layout": {
+        const nodeId = request.nodeIds && request.nodeIds[0];
+        if (!nodeId) {
+          throw new Error("nodeIds is required for set_auto_layout");
+        }
+
+        const node = await getSceneNodeById(nodeId);
+        if (!("layoutMode" in node)) {
+          throw new Error(`Node does not support auto-layout: ${node.id}`);
+        }
+        const frame = node as FrameNode;
+        const params = request.params ?? {};
+        const applied: Record<string, unknown> = {};
+
+        if (
+          params.layoutMode === "NONE" ||
+          params.layoutMode === "HORIZONTAL" ||
+          params.layoutMode === "VERTICAL"
+        ) {
+          frame.layoutMode = params.layoutMode;
+          applied.layoutMode = params.layoutMode;
+        }
+
+        if (typeof params.itemSpacing === "number") {
+          frame.itemSpacing = params.itemSpacing;
+          applied.itemSpacing = params.itemSpacing;
+        }
+        if (typeof params.counterAxisSpacing === "number") {
+          (frame as FrameNode & { counterAxisSpacing: number }).counterAxisSpacing =
+            params.counterAxisSpacing;
+          applied.counterAxisSpacing = params.counterAxisSpacing;
+        }
+
+        if (typeof params.paddingTop === "number") {
+          frame.paddingTop = params.paddingTop;
+          applied.paddingTop = params.paddingTop;
+        }
+        if (typeof params.paddingRight === "number") {
+          frame.paddingRight = params.paddingRight;
+          applied.paddingRight = params.paddingRight;
+        }
+        if (typeof params.paddingBottom === "number") {
+          frame.paddingBottom = params.paddingBottom;
+          applied.paddingBottom = params.paddingBottom;
+        }
+        if (typeof params.paddingLeft === "number") {
+          frame.paddingLeft = params.paddingLeft;
+          applied.paddingLeft = params.paddingLeft;
+        }
+
+        if (
+          params.primaryAxisAlignItems === "MIN" ||
+          params.primaryAxisAlignItems === "MAX" ||
+          params.primaryAxisAlignItems === "CENTER" ||
+          params.primaryAxisAlignItems === "SPACE_BETWEEN"
+        ) {
+          frame.primaryAxisAlignItems = params.primaryAxisAlignItems;
+          applied.primaryAxisAlignItems = params.primaryAxisAlignItems;
+        }
+        if (
+          params.counterAxisAlignItems === "MIN" ||
+          params.counterAxisAlignItems === "MAX" ||
+          params.counterAxisAlignItems === "CENTER" ||
+          params.counterAxisAlignItems === "BASELINE"
+        ) {
+          frame.counterAxisAlignItems = params.counterAxisAlignItems;
+          applied.counterAxisAlignItems = params.counterAxisAlignItems;
+        }
+
+        if (
+          params.primaryAxisSizingMode === "FIXED" ||
+          params.primaryAxisSizingMode === "AUTO"
+        ) {
+          frame.primaryAxisSizingMode = params.primaryAxisSizingMode;
+          applied.primaryAxisSizingMode = params.primaryAxisSizingMode;
+        }
+        if (
+          params.counterAxisSizingMode === "FIXED" ||
+          params.counterAxisSizingMode === "AUTO"
+        ) {
+          frame.counterAxisSizingMode = params.counterAxisSizingMode;
+          applied.counterAxisSizingMode = params.counterAxisSizingMode;
+        }
+
+        if (params.layoutWrap === "NO_WRAP" || params.layoutWrap === "WRAP") {
+          (frame as FrameNode & { layoutWrap: "NO_WRAP" | "WRAP" }).layoutWrap =
+            params.layoutWrap;
+          applied.layoutWrap = params.layoutWrap;
+        }
+
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            nodeId: node.id,
+            nodeName: node.name,
+            applied,
           },
         };
       }
