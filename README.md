@@ -65,6 +65,10 @@ Open a Figma file, run the plugin, and start prompting your AI tool. The MCP ser
 | `create_image` | Create an image-backed rectangle from a local path, URL, or data URI |
 | `duplicate_nodes` | Duplicate nodes in place |
 | `reparent_nodes` | Move nodes into another parent |
+| `group_nodes` | Wrap a list of nodes (sharing a parent) in a new group |
+| `ungroup_node` | Ungroup a group or frame — children move up to its parent |
+| `set_selection` | Set the page selection to a list of node IDs (works in Dev Mode) |
+| `scroll_and_zoom_into_view` | Frame the viewport around the given nodes (works in Dev Mode) |
 | `delete_nodes` | Delete nodes with explicit confirmation |
 | `save_screenshots` | Export and save screenshots directly to disk |
 
