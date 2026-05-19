@@ -11,6 +11,7 @@ type RequestType =
   | "get_screenshot"
   | "find_nodes"
   | "get_node_by_path"
+  | "image_fill_export"
   | "set_node_visibility"
   | "set_text_content"
   | "set_text_properties"
@@ -314,6 +315,40 @@ const decodeBase64ToBytes = (base64: string): Uint8Array => {
   } catch {
     throw new Error("Invalid base64 image payload");
   }
+};
+
+type IsolatedSibling = {
+  node: SceneNode;
+  previousVisible: boolean;
+};
+
+/**
+ * For each target, gather its parent's other children (siblings) that are
+ * currently visible. Targets themselves and their ancestors are never
+ * hidden. De-duped across targets, so a sibling listed twice is recorded
+ * only once.
+ */
+const collectSiblingsToHide = (
+  targets: SceneNode[]
+): { siblings: IsolatedSibling[] } => {
+  const targetIds = new Set(targets.map((t) => t.id));
+  const seen = new Map<string, IsolatedSibling>();
+  for (const target of targets) {
+    const parent = target.parent;
+    if (!parent || !("children" in parent)) continue;
+    for (const child of (parent as BaseNode & ChildrenMixin).children) {
+      if (targetIds.has(child.id)) continue;
+      if (!("visible" in child)) continue;
+      if ((child as SceneNode).visible === false) continue;
+      if (seen.has(child.id)) continue;
+      const sceneChild = child as SceneNode;
+      seen.set(child.id, {
+        node: sceneChild,
+        previousVisible: sceneChild.visible,
+      });
+    }
+  }
+  return { siblings: [...seen.values()] };
 };
 
 type FindNodesOptions = {
@@ -766,43 +801,63 @@ const handleRequest = async (
           );
         }
 
-        const exports = await Promise.all(
-          targetNodes.map(async (node) => {
-            const settings: ExportSettings =
-              format === "SVG"
-                ? { format: "SVG" }
-                : format === "PDF"
-                  ? { format: "PDF" }
-                  : format === "JPG"
-                    ? {
-                        format: "JPG",
-                        constraint: { type: "SCALE", value: scale },
-                      }
-                    : {
-                        format: "PNG",
-                        constraint: { type: "SCALE", value: scale },
-                      };
+        const isolate = request.params?.isolate === true;
+        const isolation = isolate
+          ? collectSiblingsToHide(targetNodes)
+          : null;
 
-            const bytes = await node.exportAsync(settings);
-            const base64 = figma.base64Encode(bytes);
-            return {
-              nodeId: node.id,
-              nodeName: node.name,
-              format,
-              base64,
-              width: node.width,
-              height: node.height,
-            };
-          })
-        );
+        try {
+          if (isolation) {
+            for (const sibling of isolation.siblings) {
+              sibling.node.visible = false;
+            }
+          }
 
-        return {
-          type: request.type,
-          requestId: request.requestId,
-          data: {
-            exports,
-          },
-        };
+          const exports = await Promise.all(
+            targetNodes.map(async (node) => {
+              const settings: ExportSettings =
+                format === "SVG"
+                  ? { format: "SVG" }
+                  : format === "PDF"
+                    ? { format: "PDF" }
+                    : format === "JPG"
+                      ? {
+                          format: "JPG",
+                          constraint: { type: "SCALE", value: scale },
+                        }
+                      : {
+                          format: "PNG",
+                          constraint: { type: "SCALE", value: scale },
+                        };
+
+              const bytes = await node.exportAsync(settings);
+              const base64 = figma.base64Encode(bytes);
+              return {
+                nodeId: node.id,
+                nodeName: node.name,
+                format,
+                base64,
+                width: node.width,
+                height: node.height,
+              };
+            })
+          );
+
+          return {
+            type: request.type,
+            requestId: request.requestId,
+            data: {
+              exports,
+              ...(isolation ? { hiddenSiblingCount: isolation.siblings.length } : {}),
+            },
+          };
+        } finally {
+          if (isolation) {
+            for (const sibling of isolation.siblings) {
+              sibling.node.visible = sibling.previousVisible;
+            }
+          }
+        }
       }
       case "find_nodes": {
         const matches = await findNodesInTree(
@@ -834,6 +889,27 @@ const handleRequest = async (
           type: request.type,
           requestId: request.requestId,
           data: matches,
+        };
+      }
+      case "image_fill_export": {
+        const imageHash = request.params?.imageHash;
+        if (typeof imageHash !== "string" || imageHash.length === 0) {
+          throw new Error("imageHash is required for image_fill_export");
+        }
+        const image = figma.getImageByHash(imageHash);
+        if (!image) {
+          throw new Error(`No image found for hash: ${imageHash}`);
+        }
+        const bytes = await image.getBytesAsync();
+        const base64 = figma.base64Encode(bytes);
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: {
+            imageHash,
+            base64,
+            bytes: bytes.length,
+          },
         };
       }
       case "get_node_by_path": {

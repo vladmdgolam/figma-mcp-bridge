@@ -204,6 +204,7 @@ export function registerTools(
       scale,
       outputPath,
       inline,
+      isolate,
       fileKey,
     }): Promise<ToolResult> => {
       try {
@@ -220,6 +221,7 @@ export function registerTools(
         const params: Record<string, unknown> = {};
         if (format) params.format = format;
         if (scale !== undefined && scale > 0) params.scale = scale;
+        if (isolate === true) params.isolate = true;
 
         const resp = await node.sendWithParams(
           "get_screenshot",
@@ -271,6 +273,197 @@ export function registerTools(
                 exports: written,
                 // hint so the agent doesn't keep the file around forever
                 ...(isTemp ? { tempDir: tempScreenshotDir() } : {}),
+              }),
+            },
+          ],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "image_fill_export",
+    "Resolve an imageHash (returned by serialized IMAGE paints in get_node) to the PNG bytes of that image fill. Writes to a temp file by default and returns metadata only — pass outputPath for a specific path, or inline:true to embed base64.",
+    toolInputSchemas.image_fill_export.shape,
+    async ({ imageHash, outputPath, inline, fileKey }): Promise<ToolResult> => {
+      try {
+        const resp = await node.sendWithParams(
+          "image_fill_export",
+          undefined,
+          { imageHash },
+          fileKey
+        );
+        if (resp.error) {
+          return {
+            content: [{ type: "text", text: resp.error }],
+            isError: true,
+          };
+        }
+        const data = resp.data as
+          | { imageHash?: string; base64?: string; bytes?: number }
+          | undefined;
+        if (!data || typeof data.base64 !== "string") {
+          throw new Error("image_fill_export response missing base64");
+        }
+
+        if (inline === true) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  imageHash: data.imageHash ?? imageHash,
+                  base64: data.base64,
+                  bytes: data.bytes,
+                }),
+              },
+            ],
+          };
+        }
+
+        const target =
+          outputPath !== undefined
+            ? resolveAndValidateOutputPath(outputPath, process.cwd())
+            : path.join(
+                imageExportTempDir(),
+                `${sanitizeForFilename(imageHash) || "image"}-${Date.now()}.png`
+              );
+        if (outputPath === undefined) {
+          await mkdir(path.dirname(target), { recursive: true });
+        }
+        const bytesWritten = await writeBase64ToFile(data.base64, target);
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                imageHash: data.imageHash ?? imageHash,
+                outputPath: target,
+                bytesWritten,
+                ...(outputPath === undefined ? { tempDir: imageExportTempDir() } : {}),
+              }),
+            },
+          ],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "save_children_json",
+    "For each direct visible child of parentId, write the full serialized node to `outputDir/<name>.json`. Collapses the 'select wrapper, save each Wave_* frame' ritual into one call. Returns per-file metadata.",
+    toolInputSchemas.save_children_json.shape,
+    async ({ parentId, outputDir, includeHidden, filenamePattern, fileKey }): Promise<ToolResult> => {
+      try {
+        const resolvedDir = resolveAndValidateOutputPath(outputDir, process.cwd());
+        await mkdir(resolvedDir, { recursive: true });
+
+        const childrenResp = await node.sendWithParams(
+          "get_node",
+          [parentId],
+          { depth: 1 },
+          fileKey
+        );
+        if (childrenResp.error) throw new Error(childrenResp.error);
+        const tree = childrenResp.data as
+          | { children?: Array<{ id: string; name: string; type: string; styles?: { visible?: boolean } }> }
+          | undefined;
+        const rawChildren = tree?.children ?? [];
+        const targetChildren = rawChildren.filter((child) => {
+          // visible:false is dropped by the serializer unless we asked for it.
+          // We re-check styles.visible just in case.
+          if (includeHidden === true) return true;
+          return child.styles?.visible !== false;
+        });
+
+        const pattern = filenamePattern ?? "{name}.json";
+        const usedNames = new Set<string>();
+        const results = [] as Array<{
+          nodeId: string;
+          nodeName: string;
+          outputPath: string;
+          bytesWritten?: number;
+          success: boolean;
+          error?: string;
+        }>;
+
+        for (const child of targetChildren) {
+          let baseName = pattern
+            .replace("{name}", sanitizeForFilename(child.name) || "child")
+            .replace("{id}", sanitizeForFilename(child.id.replace(":", "-")));
+          if (!baseName.toLowerCase().endsWith(".json")) baseName += ".json";
+
+          let uniqueName = baseName;
+          let suffix = 2;
+          while (usedNames.has(uniqueName)) {
+            uniqueName = baseName.replace(/\.json$/i, `-${suffix}.json`);
+            suffix++;
+          }
+          usedNames.add(uniqueName);
+
+          const outPath = path.join(resolvedDir, uniqueName);
+          try {
+            const childResp = await node.send("get_node", [child.id], fileKey);
+            if (childResp.error) throw new Error(childResp.error);
+            const json = JSON.stringify(childResp.data);
+            const bytes = Buffer.from(json, "utf8");
+            try {
+              await writeFile(outPath, bytes, { flag: "wx" });
+            } catch (err) {
+              if (isNodeError(err) && err.code === "EEXIST") {
+                throw new Error(`File already exists: ${outPath}`);
+              }
+              throw err;
+            }
+            results.push({
+              nodeId: child.id,
+              nodeName: child.name,
+              outputPath: outPath,
+              bytesWritten: bytes.length,
+              success: true,
+            });
+          } catch (err) {
+            results.push({
+              nodeId: child.id,
+              nodeName: child.name,
+              outputPath: outPath,
+              success: false,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
+        const succeeded = results.filter((r) => r.success).length;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                outputDir: resolvedDir,
+                total: results.length,
+                succeeded,
+                failed: results.length - succeeded,
+                results,
               }),
             },
           ],
@@ -944,6 +1137,12 @@ const SCREENSHOT_TEMP_SUBDIR = "figma-bridge-screenshots";
 
 function tempScreenshotDir(): string {
   return path.join(os.tmpdir(), SCREENSHOT_TEMP_SUBDIR);
+}
+
+const IMAGE_FILL_TEMP_SUBDIR = "figma-bridge-image-fills";
+
+function imageExportTempDir(): string {
+  return path.join(os.tmpdir(), IMAGE_FILL_TEMP_SUBDIR);
 }
 
 function sanitizeForFilename(value: string): string {

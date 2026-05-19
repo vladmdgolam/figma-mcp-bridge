@@ -172,6 +172,51 @@ const blurEffect = z.object({
   visible: z.boolean().optional().describe("Default true"),
 });
 
+export const imageFillExportInput = z.object({
+  imageHash: z
+    .string()
+    .min(1)
+    .describe(
+      "The imageHash returned in a serialized IMAGE paint (e.g. from get_node's styles.fills[].imageHash). Resolves to the PNG bytes of the image fill."
+    ),
+  outputPath: z
+    .string()
+    .optional()
+    .describe(
+      "If set, write the image bytes to this path and return only metadata. Relative paths resolve from the MCP server cwd. Omit to write to a temp file."
+    ),
+  inline: z
+    .boolean()
+    .optional()
+    .describe(
+      "If true, return base64 image bytes inline. Default false — bytes are written to a temp file (or outputPath) and only the path is returned."
+    ),
+  fileKey: fileKeyField,
+});
+
+export const saveChildrenJsonInput = z.object({
+  parentId: figmaNodeId.describe(
+    "Parent node whose direct visible children will each be serialized to a separate JSON file."
+  ),
+  outputDir: z
+    .string()
+    .min(1)
+    .describe(
+      "Output directory. Relative paths resolve from the MCP server cwd. Created if missing."
+    ),
+  includeHidden: z
+    .boolean()
+    .optional()
+    .describe("Include children with visible=false (default false)."),
+  filenamePattern: z
+    .string()
+    .optional()
+    .describe(
+      "Filename pattern with `{name}` (sanitized child name) or `{id}` (Figma node id with ':' replaced by '-'). Default '{name}.json'."
+    ),
+  fileKey: fileKeyField,
+});
+
 export const findNodesInput = z.object({
   root: figmaNodeId
     .optional()
@@ -623,12 +668,22 @@ export const toolInputSchemas = {
       .describe(
         "If true, return base64 image bytes inline in the response. Default false — by default the image is written to a temp file (or outputPath) and only the path + size are returned, to avoid filling the agent's context.",
       ),
+    isolate: z
+      .boolean()
+      .optional()
+      .describe(
+        "If true, hide every sibling of each target node (other children of its parent) before exporting and restore them after — even on failure. Useful for capturing a layer cleanly without the rest of the frame. Cheaper than a manual set_node_visibility / export / restore loop and atomic.",
+      ),
     fileKey: fileKeyField,
   }),
 
   find_nodes: findNodesInput,
 
   get_node_by_path: getNodeByPathInput,
+
+  image_fill_export: imageFillExportInput,
+
+  save_children_json: saveChildrenJsonInput,
 
   save_node_json: z.object({
     items: z
@@ -820,6 +875,8 @@ const rpcToArgs: Record<
   get_screenshot: (nodeIds, params) => ({ nodeIds, ...params }),
   find_nodes: (_nodeIds, params) => ({ ...params }),
   get_node_by_path: (_nodeIds, params) => ({ ...params }),
+  image_fill_export: (_nodeIds, params) => ({ ...params }),
+  save_children_json: (_nodeIds, params) => ({ ...params }),
   save_node_json: (_nodeIds, params) => ({ ...params }),
   set_node_visibility: (_nodeIds, params) => ({ ...params }),
   set_text_content: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
