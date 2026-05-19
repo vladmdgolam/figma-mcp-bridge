@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { lookup } from "node:dns/promises";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
+import os from "node:os";
 import path from "node:path";
 import type { z } from "zod";
 import type { Node } from "./node.js";
@@ -26,6 +27,7 @@ import {
   setTextPropertiesInput,
   toolInputSchemas,
 } from "./schema.js";
+import { projectFields } from "./projection.js";
 import type { BridgeResponse } from "./types.js";
 import { Follower } from "./follower.js";
 
@@ -134,10 +136,15 @@ export function registerTools(
 
   server.tool(
     "get_node",
-    "Get a specific Figma node by ID. Accepts top-level IDs like '4029:12345' and instance-child IDs like 'I12740:17806;12740:17793'. Never use hyphens. When multiple files are connected, specify fileKey.",
+    "Get a specific Figma node by ID. Accepts top-level IDs like '4029:12345' and instance-child IDs like 'I12740:17806;12740:17793'. Never use hyphens. By default returns the node with its children as {id,name,type} stubs; call get_node again on a child ID to drill in. Pass `depth` for more levels at once, or a large value for the full subtree. Pass `fields` to project only specific dot-paths (e.g. ['bounds','styles.fills']) and trim the response. Omitted style fields are at Figma defaults (opacity=1, visible=true, blendMode=NORMAL/PASS_THROUGH, rotation=0, cornerRadius=0, constraints={MIN,MIN}; empty fills/strokes/effects mean none set). When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_node.shape,
-    async ({ nodeId, fileKey }): Promise<ToolResult> => {
-      return renderResponse(() => node.send("get_node", [nodeId], fileKey));
+    async ({ nodeId, depth, fields, fileKey }): Promise<ToolResult> => {
+      const params: Record<string, unknown> = {};
+      params.depth = depth ?? 0;
+      return renderResponse(
+        () => node.sendWithParams("get_node", [nodeId], params, fileKey),
+        (data) => projectFields(data, fields)
+      );
     }
   );
 
@@ -189,14 +196,126 @@ export function registerTools(
 
   server.tool(
     "get_screenshot",
-    "Export a screenshot of the selected nodes or specific nodes by ID. Returns base64-encoded image data. When multiple files are connected, specify fileKey.",
+    "Export a screenshot of the selected nodes or specific nodes by ID. By default writes each export to a temp file and returns only metadata (path, width, height) so the agent context stays lean. Pass `outputPath` to write to a specific path (single-node only — use save_screenshots for batches). Pass `inline: true` to return base64 in the response instead. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_screenshot.shape,
-    async ({ nodeIds, format, scale, fileKey }): Promise<ToolResult> => {
+    async ({
+      nodeIds,
+      format,
+      scale,
+      outputPath,
+      inline,
+      fileKey,
+    }): Promise<ToolResult> => {
+      try {
+        if (
+          outputPath !== undefined &&
+          nodeIds !== undefined &&
+          nodeIds.length > 1
+        ) {
+          throw new Error(
+            "outputPath only supports a single nodeId. Use save_screenshots for multi-node exports."
+          );
+        }
+
+        const params: Record<string, unknown> = {};
+        if (format) params.format = format;
+        if (scale !== undefined && scale > 0) params.scale = scale;
+
+        const resp = await node.sendWithParams(
+          "get_screenshot",
+          nodeIds,
+          params,
+          fileKey
+        );
+        if (resp.error) {
+          return {
+            content: [{ type: "text", text: resp.error }],
+            isError: true,
+          };
+        }
+
+        const exports = parseScreenshotExports(resp.data);
+
+        if (inline === true) {
+          // Legacy / opt-in path: return the full base64 payload as-is.
+          return {
+            content: [{ type: "text", text: JSON.stringify(resp.data) }],
+          };
+        }
+
+        const written = await Promise.all(
+          exports.map(async (exp, index) => {
+            const target =
+              outputPath !== undefined && exports.length === 1
+                ? resolveAndValidateOutputPath(outputPath, process.cwd())
+                : await defaultScreenshotPath(exp, index);
+            const bytes = await writeBase64ToFile(exp.base64, target);
+            return {
+              nodeId: exp.nodeId,
+              nodeName: exp.nodeName,
+              format: exp.format,
+              width: exp.width,
+              height: exp.height,
+              outputPath: target,
+              bytesWritten: bytes,
+            };
+          })
+        );
+
+        const isTemp = outputPath === undefined;
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify({
+                exports: written,
+                // hint so the agent doesn't keep the file around forever
+                ...(isTemp ? { tempDir: tempScreenshotDir() } : {}),
+              }),
+            },
+          ],
+        };
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "find_nodes",
+    "Walk the Figma tree from a root (or the current page) and return nodes matching the filters. Returns lightweight rows [{id, name, type, bounds, path}] so an agent can locate a node without serializing its full subtree. Combine `name`/`regex`/`type` to narrow. Hidden subtrees are skipped unless `includeHidden: true`.",
+    toolInputSchemas.find_nodes.shape,
+    async ({ root, name, regex, type, limit, includeHidden, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = {};
-      if (format) params.format = format;
-      if (scale !== undefined && scale > 0) params.scale = scale;
+      if (root !== undefined) params.root = root;
+      if (name !== undefined) params.name = name;
+      if (regex !== undefined) params.regex = regex;
+      if (type !== undefined) params.type = type;
+      if (limit !== undefined) params.limit = limit;
+      if (includeHidden !== undefined) params.includeHidden = includeHidden;
       return renderResponse(() =>
-        node.sendWithParams("get_screenshot", nodeIds, params, fileKey)
+        node.sendWithParams("find_nodes", undefined, params, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "get_node_by_path",
+    "Resolve a slash-separated chain of child names (e.g. 'Wave_orange/Shader/Player blur') to a Figma node, starting at the root (or current page). Returns a minimal {id, name, type, bounds}; pass the id back to get_node for full details. Path matching is exact name per segment and resilient to file revisions that reshuffle IDs.",
+    toolInputSchemas.get_node_by_path.shape,
+    async ({ root, path: nodePath, fileKey }): Promise<ToolResult> => {
+      const params: Record<string, unknown> = { path: nodePath };
+      if (root !== undefined) params.root = root;
+      return renderResponse(() =>
+        node.sendWithParams("get_node_by_path", undefined, params, fileKey)
       );
     }
   );
@@ -534,7 +653,8 @@ export async function executeSaveScreenshots(
 }
 
 async function renderResponse(
-  fn: () => Promise<BridgeResponse>
+  fn: () => Promise<BridgeResponse>,
+  transform?: (data: unknown) => unknown
 ): Promise<ToolResult> {
   try {
     const resp = await fn();
@@ -544,8 +664,9 @@ async function renderResponse(
         isError: true,
       };
     }
+    const payload = transform ? transform(resp.data) : resp.data;
     return {
-      content: [{ type: "text", text: JSON.stringify(resp.data) }],
+      content: [{ type: "text", text: JSON.stringify(payload) }],
     };
   } catch (err) {
     return {
@@ -793,6 +914,69 @@ function resolveExportFormat(
     );
   }
   return format ?? inferredFormat ?? "PNG";
+}
+
+function parseScreenshotExports(data: unknown): ScreenshotExport[] {
+  if (!data || typeof data !== "object") {
+    throw new Error("Invalid screenshot response from plugin");
+  }
+  const exports = (data as { exports?: unknown }).exports;
+  if (!Array.isArray(exports) || exports.length === 0) {
+    throw new Error("No screenshot exports returned by plugin");
+  }
+  return exports.map((entry, index) => {
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      typeof (entry as { nodeId?: unknown }).nodeId !== "string" ||
+      typeof (entry as { nodeName?: unknown }).nodeName !== "string" ||
+      typeof (entry as { base64?: unknown }).base64 !== "string" ||
+      typeof (entry as { width?: unknown }).width !== "number" ||
+      typeof (entry as { height?: unknown }).height !== "number"
+    ) {
+      throw new Error(`Malformed screenshot export at index ${index}`);
+    }
+    return entry as ScreenshotExport;
+  });
+}
+
+const SCREENSHOT_TEMP_SUBDIR = "figma-bridge-screenshots";
+
+function tempScreenshotDir(): string {
+  return path.join(os.tmpdir(), SCREENSHOT_TEMP_SUBDIR);
+}
+
+function sanitizeForFilename(value: string): string {
+  return value
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+}
+
+function extensionForFormat(format: ExportFormat): string {
+  switch (format) {
+    case "PNG":
+      return "png";
+    case "SVG":
+      return "svg";
+    case "JPG":
+      return "jpg";
+    case "PDF":
+      return "pdf";
+  }
+}
+
+async function defaultScreenshotPath(
+  exp: ScreenshotExport,
+  index: number
+): Promise<string> {
+  const dir = tempScreenshotDir();
+  await mkdir(dir, { recursive: true });
+  const ext = extensionForFormat(exp.format);
+  const name = sanitizeForFilename(exp.nodeName) || "node";
+  const nodeIdSafe = sanitizeForFilename(exp.nodeId) || "id";
+  const ts = Date.now();
+  return path.join(dir, `${name}-${nodeIdSafe}-${ts}-${index}.${ext}`);
 }
 
 function getSingleScreenshotExport(data: unknown): ScreenshotExport {

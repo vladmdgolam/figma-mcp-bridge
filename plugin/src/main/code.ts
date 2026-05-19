@@ -9,6 +9,8 @@ type RequestType =
   | "get_design_context"
   | "get_variable_defs"
   | "get_screenshot"
+  | "find_nodes"
+  | "get_node_by_path"
   | "set_node_visibility"
   | "set_text_content"
   | "set_text_properties"
@@ -314,6 +316,190 @@ const decodeBase64ToBytes = (base64: string): Uint8Array => {
   }
 };
 
+type FindNodesOptions = {
+  name?: string;
+  regex?: string;
+  type?: string;
+  limit: number;
+  includeHidden: boolean;
+};
+
+type FindNodesMatch = {
+  id: string;
+  name: string;
+  type: string;
+  bounds?: { x: number; y: number; width: number; height: number };
+  path: string;
+};
+
+type FindNodesResult = {
+  matches: FindNodesMatch[];
+  truncated: boolean;
+  rootId: string;
+  rootName: string;
+};
+
+const nodeBoundsLite = (
+  child: BaseNode
+): { x: number; y: number; width: number; height: number } | undefined => {
+  if (
+    "x" in child &&
+    "y" in child &&
+    "width" in child &&
+    "height" in child &&
+    typeof (child as { x: unknown }).x === "number" &&
+    typeof (child as { y: unknown }).y === "number" &&
+    typeof (child as { width: unknown }).width === "number" &&
+    typeof (child as { height: unknown }).height === "number"
+  ) {
+    return {
+      x: (child as { x: number }).x,
+      y: (child as { y: number }).y,
+      width: (child as { width: number }).width,
+      height: (child as { height: number }).height,
+    };
+  }
+  return undefined;
+};
+
+const resolveSearchRoot = async (
+  rootId: string | undefined
+): Promise<BaseNode & ChildrenMixin> => {
+  if (rootId === undefined) {
+    return figma.currentPage;
+  }
+  const root = await figma.getNodeByIdAsync(rootId);
+  if (!root) {
+    throw new Error(`Root node not found: ${rootId}`);
+  }
+  if (!("children" in root)) {
+    throw new Error(`Root node has no children: ${rootId}`);
+  }
+  return root as BaseNode & ChildrenMixin;
+};
+
+const findNodesInTree = async (
+  rootId: string | undefined,
+  options: FindNodesOptions
+): Promise<FindNodesResult> => {
+  const root = await resolveSearchRoot(rootId);
+
+  const lowerName = options.name?.toLowerCase();
+  const lowerType = options.type?.toUpperCase();
+  let regex: RegExp | undefined;
+  if (options.regex) {
+    try {
+      regex = new RegExp(options.regex);
+    } catch (err) {
+      throw new Error(
+        `Invalid regex: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+  }
+
+  const matches: FindNodesMatch[] = [];
+  let truncated = false;
+
+  const matchesFilters = (child: BaseNode): boolean => {
+    if (lowerType && child.type.toUpperCase() !== lowerType) return false;
+    if (regex) {
+      if (!regex.test(child.name)) return false;
+    } else if (lowerName !== undefined) {
+      if (!child.name.toLowerCase().includes(lowerName)) return false;
+    }
+    return true;
+  };
+
+  const walk = (parent: BaseNode & ChildrenMixin, parentPath: string): void => {
+    for (const child of parent.children) {
+      if (!options.includeHidden && "visible" in child && child.visible === false) {
+        continue;
+      }
+      const here = parentPath ? `${parentPath}/${child.name}` : child.name;
+      if (matchesFilters(child)) {
+        if (matches.length >= options.limit) {
+          truncated = true;
+          return;
+        }
+        matches.push({
+          id: child.id,
+          name: child.name,
+          type: child.type,
+          bounds: nodeBoundsLite(child),
+          path: here,
+        });
+      }
+      if ("children" in child) {
+        walk(child as BaseNode & ChildrenMixin, here);
+        if (truncated) return;
+      }
+    }
+  };
+
+  walk(root, "");
+
+  return {
+    matches,
+    truncated,
+    rootId: root.id,
+    rootName: root.name,
+  };
+};
+
+const resolveNodeByPath = async (
+  rootId: string | undefined,
+  rawPath: string
+): Promise<{
+  id: string;
+  name: string;
+  type: string;
+  bounds?: { x: number; y: number; width: number; height: number };
+  resolvedPath: string;
+}> => {
+  const segments = rawPath
+    .split("/")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (segments.length === 0) {
+    throw new Error("path must contain at least one segment");
+  }
+
+  let current: BaseNode = await resolveSearchRoot(rootId);
+  const traversed: string[] = [];
+
+  for (const segment of segments) {
+    if (!("children" in current)) {
+      throw new Error(
+        `Cannot descend into '${segment}': '${current.name}' has no children`
+      );
+    }
+    const next = (current as BaseNode & ChildrenMixin).children.find(
+      (child) => child.name === segment
+    );
+    if (!next) {
+      const available = (current as BaseNode & ChildrenMixin).children
+        .slice(0, 12)
+        .map((c) => c.name)
+        .join(", ");
+      throw new Error(
+        `Child not found: '${segment}' under '${current.name}'. Available: [${available}${
+          (current as BaseNode & ChildrenMixin).children.length > 12 ? ", …" : ""
+        }]`
+      );
+    }
+    current = next;
+    traversed.push(segment);
+  }
+
+  return {
+    id: current.id,
+    name: current.name,
+    type: current.type,
+    bounds: nodeBoundsLite(current),
+    resolvedPath: traversed.join("/"),
+  };
+};
+
 const EDIT_REQUEST_TYPES = new Set<RequestType>([
   "set_node_visibility",
   "set_text_content",
@@ -616,6 +802,54 @@ const handleRequest = async (
           data: {
             exports,
           },
+        };
+      }
+      case "find_nodes": {
+        const matches = await findNodesInTree(
+          typeof request.params?.root === "string"
+            ? (request.params.root as string)
+            : undefined,
+          {
+            name:
+              typeof request.params?.name === "string"
+                ? (request.params.name as string)
+                : undefined,
+            regex:
+              typeof request.params?.regex === "string"
+                ? (request.params.regex as string)
+                : undefined,
+            type:
+              typeof request.params?.type === "string"
+                ? (request.params.type as string)
+                : undefined,
+            limit:
+              typeof request.params?.limit === "number"
+                ? (request.params.limit as number)
+                : 50,
+            includeHidden:
+              request.params?.includeHidden === true,
+          }
+        );
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: matches,
+        };
+      }
+      case "get_node_by_path": {
+        const rawPath = request.params?.path;
+        if (typeof rawPath !== "string" || rawPath.length === 0) {
+          throw new Error("path is required for get_node_by_path");
+        }
+        const rootId =
+          typeof request.params?.root === "string"
+            ? (request.params.root as string)
+            : undefined;
+        const result = await resolveNodeByPath(rootId, rawPath);
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: result,
         };
       }
       case "set_node_visibility": {

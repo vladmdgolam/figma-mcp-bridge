@@ -172,6 +172,61 @@ const blurEffect = z.object({
   visible: z.boolean().optional().describe("Default true"),
 });
 
+export const findNodesInput = z.object({
+  root: figmaNodeId
+    .optional()
+    .describe(
+      "Root node ID to search under. Omit to search the entire current page."
+    ),
+  name: z
+    .string()
+    .optional()
+    .describe(
+      "Match nodes whose name contains this substring (case-insensitive). Use `regex` for richer matches."
+    ),
+  regex: z
+    .string()
+    .optional()
+    .describe(
+      "Match nodes whose name matches this JavaScript regular expression. Takes precedence over `name`."
+    ),
+  type: z
+    .string()
+    .optional()
+    .describe(
+      "Filter by node type, e.g. 'ELLIPSE', 'FRAME', 'GROUP', 'TEXT'. Case-insensitive."
+    ),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe("Max results (default 50)."),
+  includeHidden: z
+    .boolean()
+    .optional()
+    .describe(
+      "Include nodes with visible=false. Default false — hidden subtrees are skipped entirely."
+    ),
+  fileKey: fileKeyField,
+});
+
+export const getNodeByPathInput = z.object({
+  root: figmaNodeId
+    .optional()
+    .describe(
+      "Root node ID to resolve the path from. Omit to start at the current page."
+    ),
+  path: z
+    .string()
+    .min(1)
+    .describe(
+      "Slash-separated chain of child names, e.g. 'Wave_orange/Shader/Player blur'. Each segment matches a direct child by exact name."
+    ),
+  fileKey: fileKeyField,
+});
+
 export const setSelectionInput = z.object({
   nodeIds: z
     .array(figmaNodeId)
@@ -505,6 +560,20 @@ export const toolInputSchemas = {
     nodeId: figmaNodeId.describe(
       "The node ID to fetch. Accepts top-level IDs like '4029:12345' and instance-child IDs like 'I12740:17806;12740:17793'."
     ),
+    depth: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "How many levels deep to serialize fully. Default 0 = this node only with children as {id,name,type} stubs. Set higher for more depth, or pass a large number for the full subtree."
+      ),
+    fields: z
+      .array(z.string().min(1))
+      .optional()
+      .describe(
+        "Optional dot-paths to keep in the response, e.g. ['bounds','styles.fills','styles.effects']. When provided, only these fields plus id/name/type are returned. Recurses through arrays — 'children.styles.fills' projects each child. Big payload trimmer for large nodes."
+      ),
     fileKey: fileKeyField,
   }),
 
@@ -542,6 +611,40 @@ export const toolInputSchemas = {
       .number()
       .optional()
       .describe("Export scale for raster formats (default 2)"),
+    outputPath: z
+      .string()
+      .optional()
+      .describe(
+        "If set, write the exported image to this path and return only metadata. Relative paths resolve from the MCP server cwd. For multiple nodeIds, prefer save_screenshots instead.",
+      ),
+    inline: z
+      .boolean()
+      .optional()
+      .describe(
+        "If true, return base64 image bytes inline in the response. Default false — by default the image is written to a temp file (or outputPath) and only the path + size are returned, to avoid filling the agent's context.",
+      ),
+    fileKey: fileKeyField,
+  }),
+
+  find_nodes: findNodesInput,
+
+  get_node_by_path: getNodeByPathInput,
+
+  save_node_json: z.object({
+    items: z
+      .array(
+        z.object({
+          nodeId: figmaNodeId.describe("The node ID to serialize"),
+          outputPath: z
+            .string()
+            .min(1)
+            .describe(
+              "Output .json file path (relative paths resolve from the MCP server current working directory)",
+            ),
+        }),
+      )
+      .min(1)
+      .describe("List of nodes to serialize and save as JSON files"),
     fileKey: fileKeyField,
   }),
 
@@ -715,6 +818,9 @@ const rpcToArgs: Record<
   get_design_context: (_nodeIds, params) => ({ ...params }),
   get_variable_defs: (_nodeIds, params) => ({ ...params }),
   get_screenshot: (nodeIds, params) => ({ nodeIds, ...params }),
+  find_nodes: (_nodeIds, params) => ({ ...params }),
+  get_node_by_path: (_nodeIds, params) => ({ ...params }),
+  save_node_json: (_nodeIds, params) => ({ ...params }),
   set_node_visibility: (_nodeIds, params) => ({ ...params }),
   set_text_content: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
   set_text_properties: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
