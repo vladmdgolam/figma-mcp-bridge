@@ -167,23 +167,8 @@ export default function App() {
 
   return (
     <div className="container">
-      <div className="info-section">
-        <div className="info-row">
-          <span className="info-label">File:</span>
-          <span className="info-value">{status.fileName}</span>
-        </div>
-        <div className="info-row">
-          <span className="info-label">Selection:</span>
-          <span className="info-value">{status.selectionCount} node(s)</span>
-        </div>
-      </div>
-
-      <div className="footer">
-        <div className={`badge ${connected ? "connected" : "disconnected"}`}>
-          <span className="dot" />
-          <span className="badge-text">{statusLabel}</span>
-        </div>
-      </div>
+      <span className={`dot ${connected ? "connected" : "disconnected"}`} />
+      <span className="info-value">{status.selectionCount} node(s) selected</span>
     </div>
   );
 }

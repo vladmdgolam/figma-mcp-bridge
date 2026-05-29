@@ -1,13 +1,8 @@
 :root {
   --bg-primary: #0f172b;
-  --text-label: #cad5e2;
   --text-value: #f1f5f9;
-  --badge-bg: #ffffff;
-  --badge-border: #d5d7da;
-  --badge-text: #414651;
   --dot-connected: #17b26a;
   --dot-disconnected: #f04438;
-  --text-white: #ffffff;
 }
 
 * {
@@ -28,70 +23,32 @@ body {
 }
 
 .container {
-  padding: 10px 12px;
+  padding: 0 10px;
+  height: 100vh;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.info-section {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.info-row {
-  display: flex;
-  align-items: baseline;
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.info-label {
-  color: var(--text-label);
-  width: 82px;
-  flex-shrink: 0;
-}
-
-.info-value {
-  color: var(--text-value);
-}
-
-.footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-}
-
-.badge {
-  display: inline-flex;
+  flex-direction: row;
   align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  border-radius: 6px;
-  background: var(--badge-bg);
-  border: 1px solid var(--badge-border);
-  font-size: 12px;
-  line-height: 18px;
-  white-space: nowrap;
+  gap: 7px;
 }
 
-.badge .dot {
+.dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
-.badge.connected .dot {
+.dot.connected {
   background: var(--dot-connected);
 }
 
-.badge.disconnected .dot {
+.dot.disconnected {
   background: var(--dot-disconnected);
 }
 
-.badge .badge-text {
-  color: var(--badge-text);
-  font-weight: 500;
+.info-value {
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-value);
+  white-space: nowrap;
 }
