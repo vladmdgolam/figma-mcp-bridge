@@ -1953,7 +1953,7 @@ const handleRequest = async (
   }
 };
 
-figma.showUI(__html__, { width: 320, height: 180 });
+figma.showUI(__html__, { width: 220, height: 96 });
 sendStatus();
 
 figma.on("selectionchange", () => {

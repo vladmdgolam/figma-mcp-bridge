@@ -28,17 +28,16 @@ body {
 }
 
 .container {
-  padding: 14px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  height: 100vh;
+  gap: 8px;
 }
 
 .info-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 4px;
 }
 
 .info-row {
