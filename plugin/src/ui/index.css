@@ -96,28 +96,3 @@ body {
   color: var(--badge-text);
   font-weight: 500;
 }
-
-.branding {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.branding:hover {
-  opacity: 0.85;
-}
-
-.branding .logo {
-  height: 22px;
-  width: auto;
-}
-
-.branding .sponsored-text {
-  color: var(--text-white);
-  font-size: 10px;
-  line-height: 1.4;
-  text-align: right;
-}

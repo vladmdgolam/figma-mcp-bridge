@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import hoppLogo from "./assets/hopp-logo.png";
 
 type RequestType =
   | "get_document"
@@ -184,21 +183,6 @@ export default function App() {
           <span className="dot" />
           <span className="badge-text">{statusLabel}</span>
         </div>
-        <a
-          href="https://www.gethopp.app/?ref=figma-mcp-bridge"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="branding"
-        >
-          <img src={hoppLogo} alt="Hopp" className="logo" />
-          <span className="sponsored-text">
-            Sponsored by Hopp
-            <br />
-            The best open-source
-            <br />
-            pair-programming app
-          </span>
-        </a>
       </div>
     </div>
   );
