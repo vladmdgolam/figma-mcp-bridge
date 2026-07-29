@@ -1,14 +1,16 @@
 {
-  "name": "@gethopp/figma-mcp-bridge",
-  "version": "0.1.1",
-  "description": "MCP server that bridges Figma plugin data to AI tools without hitting API rate limits",
+  "name": "@vladik.xyz/figma-mcp-bridge",
+  "version": "0.2.0",
+  "description": "MCP server that bridges Figma plugin data to AI tools without hitting API rate limits — fork adding field projection, disk-by-default screenshots, tree search and image-fill export",
   "type": "module",
   "bin": {
     "figma-mcp-bridge": "dist/index.js"
   },
   "main": "dist/index.js",
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -23,12 +25,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/gethopp/figma-mcp-bridge.git",
+    "url": "git+https://github.com/vladmdgolam/figma-mcp-bridge.git",
     "directory": "server"
   },
-  "homepage": "https://github.com/gethopp/figma-mcp-bridge#readme",
+  "homepage": "https://github.com/vladmdgolam/figma-mcp-bridge#readme",
   "bugs": {
-    "url": "https://github.com/gethopp/figma-mcp-bridge/issues"
+    "url": "https://github.com/vladmdgolam/figma-mcp-bridge/issues"
   },
   "license": "MIT",
   "dependencies": {

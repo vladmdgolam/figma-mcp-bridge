@@ -2,14 +2,14 @@
 
 Punch list of improvements not yet shipped. Reference for next sessions.
 Captured 2026-05-19 from an audit of agent-context bloat + workflow
-friction. Items already shipped (b56856a, c17363f) are omitted.
+friction. Items already shipped are omitted.
 
 ## High-leverage new tools
 
 - **`get_node_hash` / `diff_node`** — return a node's `lastModified` (or
   content hash of its serialized tree). Lets refresh scripts skip
-  unchanged frames cheaply. Closes the "stale-refs" hazard documented
-  in consumers (music-shader's `MEMORY.md` TODO).
+  unchanged frames cheaply. Closes the "stale-refs" hazard where a
+  downstream consumer caches node IDs that a file revision reshuffles.
 - **Batch `set_properties`** — one WebSocket call carrying multiple
   `{nodeId, props}` entries instead of N. Today tuning 8 frames is 24+
   calls. Touches every `set_*` tool — design a unified dispatch.
@@ -85,7 +85,7 @@ friction. Items already shipped (b56856a, c17363f) are omitted.
 
 ## Shipped (for context)
 
-- `b56856a` — `get_node` fields projection · `get_screenshot`
-  disk-by-default · `find_nodes` · `get_node_by_path`.
-- `c17363f` — `get_screenshot({ isolate: true })` · `image_fill_export`
-  · `save_children_json`.
+- `get_node` fields projection · `get_screenshot` disk-by-default ·
+  `find_nodes` · `get_node_by_path`.
+- `get_screenshot({ isolate: true })` · `image_fill_export` ·
+  `save_children_json`.

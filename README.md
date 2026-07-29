@@ -1,9 +1,12 @@
 # Figma MCP Bridge
 
-[![Pairing with Hopp](https://gethopp.app/git/hopp-shield.svg?ref=hopp-repo)](https://gethopp.app)
+> **Fork** of [gethopp/figma-mcp-bridge](https://github.com/gethopp/figma-mcp-bridge), kept in sync with upstream and adding agent-context ergonomics: field projection, disk-by-default screenshots, tree search, and image-fill export. See [What this fork adds](#what-this-fork-adds). Original work © GETHOPP LTD, MIT.
+>
+> npm: [`@vladik.xyz/figma-mcp-bridge`](https://www.npmjs.com/package/@vladik.xyz/figma-mcp-bridge)
 
 - [Demo](#demo)
 - [Quick Start](#quick-start)
+- [What this fork adds](#what-this-fork-adds)
 - [Available Tools](#available-tools)
 - [Local development](#local-development)
 - [Structure](#structure)
@@ -11,7 +14,7 @@
 
 <br/>
 
-<img src="https://raw.githubusercontent.com/gethopp/figma-mcp-bridge/main/logo.png" alt="Figma MCP Bridge" align="center" />
+<img src="https://raw.githubusercontent.com/vladmdgolam/figma-mcp-bridge/main/logo.png" alt="Figma MCP Bridge" align="center" />
 
 <br/>
 
@@ -42,7 +45,7 @@ Add the following to your AI tool's MCP configuration (e.g. Cursor, Windsurf, Cl
 {
   "figma-bridge": {
     "command": "npx",
-    "args": ["-y", "@gethopp/figma-mcp-bridge"]
+    "args": ["-y", "@vladik.xyz/figma-mcp-bridge"]
   }
 }
 ```
@@ -51,7 +54,15 @@ That's it — no binaries to download or install.
 
 ### 2. Add the Figma plugin
 
-Download the plugin from the [latest release](https://github.com/gethopp/figma-mcp-bridge/releases) page, then in Figma go to `Plugins > Development > Import plugin from manifest` and select the `manifest.json` file from the `plugin/` folder.
+This fork doesn't publish plugin releases — build it from source (it takes a few seconds):
+
+```bash
+git clone git@github.com:vladmdgolam/figma-mcp-bridge.git
+cd figma-mcp-bridge/plugin
+bun install && bun run build
+```
+
+Then in Figma go to `Plugins > Development > Import plugin from manifest` and select `manifest.json` from the `plugin/` folder.
 
 ### 3. Start using it 🎉
 
@@ -61,20 +72,40 @@ To work across multiple files, just open the plugin in each Figma file. The brid
 
 If you want to know more about how it works, read the [How it works](#how-it-works) section.
 
+## What this fork adds
+
+Everything upstream does, plus a set of changes aimed at keeping an agent's context small and its workflows atomic:
+
+- **`get_node({ fields })` — server-side projection.** Pass dot-paths like `['bounds', 'styles.fills', 'children.styles.fills']`; the server prunes everything else, recursing into arrays and always keeping `id`/`name`/`type`. Takes ~300 KB node payloads down to ~5 KB.
+- **`get_screenshot` writes to disk by default.** Returns `{path, width, height, format, scale}` rather than a base64 blob that swamps the transcript. `inline: true` restores the old behavior; `outputPath` picks the destination.
+- **`get_screenshot({ isolate: true })`.** Hides every sibling of each target before exporting and restores them in a `finally` — safe even if the export throws. One call instead of a manual hide/export/restore loop.
+- **`find_nodes`.** Locate nodes by name substring, regex, and/or type without serializing subtrees. Hidden subtrees are skipped unless `includeHidden`.
+- **`get_node_by_path`.** Address a node by a readable chain of names (`'Hero/Card/Title'`) instead of an ID that a file revision can invalidate.
+- **`image_fill_export`.** Turn an `imageHash` from a serialized IMAGE paint into real PNG bytes — previously `get_node` returned hashes an agent couldn't do anything with.
+- **`save_children_json`.** Write each direct visible child of a parent to its own JSON file in a single call.
+
+The plugin UI is also de-branded and collapsed to a single line (connection dot + selection count).
+
 ## Available Tools
+
+🔱 marks tools and behaviors added by this fork.
 
 | Tool | Description |
 |------|-------------|
 | `list_files` | List all connected Figma files (supports multi-file workflows) |
 | `get_document` | Get the current Figma page document tree |
 | `get_selection` | Get the currently selected nodes in Figma |
-| `get_node` | Get a specific Figma node by ID (colon format, e.g. `4029:12345`) |
+| `get_node` | Get a specific Figma node by ID (colon format, e.g. `4029:12345`). Pass `fields` to project only the paths you need — see [fork additions](#what-this-fork-adds) |
+| `find_nodes` | 🔱 Search the tree by name substring, regex, and/or node type; returns lightweight rows |
+| `get_node_by_path` | 🔱 Resolve a slash-separated chain of child names (`'Hero/Card/Title'`) to a node |
 | `get_styles` | Get all local paint, text, effect, and grid styles |
 | `get_metadata` | Get file name, pages, and current page info |
 | `get_design_context` | Get a depth-limited tree optimized for understanding design context |
 | `get_variable_defs` | Get all variable collections, modes, and values (design tokens) |
-| `get_screenshot` | Export nodes as PNG/SVG/JPG/PDF (base64-encoded) |
+| `get_screenshot` | Export nodes as PNG/SVG/JPG/PDF. 🔱 Writes to a temp file and returns the path by default (pass `inline: true` for base64); 🔱 `isolate: true` hides siblings for a clean capture |
 | `save_screenshots` | Export and save screenshots directly to the local filesystem |
+| `image_fill_export` | 🔱 Resolve an `imageHash` from an IMAGE paint to the actual PNG bytes |
+| `save_children_json` | 🔱 Serialize every direct visible child of a parent to its own JSON file |
 | `get_motion_styles` | List all available animation presets (beta) |
 | `get_node_motion` | Read a node's current animation styles and properties (beta) |
 | `apply_animation_style` | Apply a preset animation style to a node (beta) |
@@ -125,7 +156,7 @@ The current version is intentionally limited — no components/instances, no var
 #### 1. Clone this repository locally
 
 ```bash
-git clone git@github.com:gethopp/figma-mcp-bridge.git
+git clone git@github.com:vladmdgolam/figma-mcp-bridge.git
 ```
 
 #### 2. Build the server

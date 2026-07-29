@@ -383,7 +383,7 @@ export function registerTools(
 
   server.tool(
     "save_children_json",
-    "For each direct visible child of parentId, write the full serialized node to `outputDir/<name>.json`. Collapses the 'select wrapper, save each Wave_* frame' ritual into one call. Returns per-file metadata.",
+    "For each direct visible child of parentId, write the full serialized node to `outputDir/<name>.json`. Collapses the 'select wrapper, save each child frame' ritual into one call. Returns per-file metadata.",
     toolInputSchemas.save_children_json.shape,
     async ({ parentId, outputDir, includeHidden, filenamePattern, fileKey }): Promise<ToolResult> => {
       try {
