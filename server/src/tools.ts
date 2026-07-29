@@ -16,6 +16,9 @@ import {
   setNodePropertiesInput,
   setGradientFillInput,
   setSolidFillInput,
+  setSolidFillShape,
+  setTextContentShape,
+  setEffectsShape,
   setEffectsInput,
   setStrokePropertiesInput,
   setAutoLayoutInput,
@@ -64,6 +67,7 @@ interface SaveScreenshotItemInput {
   outputPath: string;
   format?: ExportFormat;
   scale?: number;
+  clip?: boolean;
 }
 
 interface SaveScreenshotItemResult {
@@ -79,6 +83,12 @@ interface SaveScreenshotItemResult {
   error?: string;
 }
 
+/**
+ * Registers all Figma bridge tools on the given MCP server.
+ * @param server - The MCP server instance.
+ * @param node - The node coordinator for leader/follower routing.
+ * @param port - The port used for follower-to-leader HTTP calls.
+ */
 export function registerTools(
   server: McpServer,
   node: Node,
@@ -205,6 +215,7 @@ export function registerTools(
       outputPath,
       inline,
       isolate,
+      clip,
       fileKey,
     }): Promise<ToolResult> => {
       try {
@@ -222,6 +233,7 @@ export function registerTools(
         if (format) params.format = format;
         if (scale !== undefined && scale > 0) params.scale = scale;
         if (isolate === true) params.isolate = true;
+        if (clip !== undefined) params.clip = clip;
 
         const resp = await node.sendWithParams(
           "get_screenshot",
@@ -502,7 +514,7 @@ export function registerTools(
 
   server.tool(
     "get_node_by_path",
-    "Resolve a slash-separated chain of child names (e.g. 'Wave_orange/Shader/Player blur') to a Figma node, starting at the root (or current page). Returns a minimal {id, name, type, bounds}; pass the id back to get_node for full details. Path matching is exact name per segment and resilient to file revisions that reshuffle IDs.",
+    "Resolve a slash-separated chain of child names (e.g. 'Hero/Card/Title') to a Figma node, starting at the root (or current page). Returns a minimal {id, name, type, bounds}; pass the id back to get_node for full details. Path matching is exact name per segment and resilient to file revisions that reshuffle IDs.",
     toolInputSchemas.get_node_by_path.shape,
     async ({ root, path: nodePath, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = { path: nodePath };
@@ -519,16 +531,24 @@ export function registerTools(
     toolInputSchemas.set_node_visibility.shape,
     async ({ items, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
-        node.sendWithParams("set_node_visibility", undefined, { items }, fileKey)
+        node.sendWithParams(
+          "set_node_visibility",
+          undefined,
+          { items },
+          fileKey
+        )
       );
     }
   );
 
   server.tool(
     "set_text_content",
-    "Update the contents of a single text node. The plugin loads the node's fonts before applying the new text. When multiple files are connected, specify fileKey.",
-    toolInputSchemas.set_text_content.shape,
-    async ({ nodeId, text, fileKey }): Promise<ToolResult> => {
+    "Update the contents of a single text node. The plugin loads the node's fonts before applying the new text. Accepts either text or characters. When multiple files are connected, specify fileKey.",
+    setTextContentShape.shape,
+    async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(toolInputSchemas.set_text_content, args);
+      if (!parsed.success) return parsed.error;
+      const { nodeId, text, fileKey } = parsed.data;
       return renderResponse(() =>
         node.sendWithParams("set_text_content", [nodeId], { text }, fileKey)
       );
@@ -544,7 +564,12 @@ export function registerTools(
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...properties } = parsed.data;
       return renderResponse(() =>
-        node.sendWithParams("set_text_properties", [nodeId], properties, fileKey)
+        node.sendWithParams(
+          "set_text_properties",
+          [nodeId],
+          properties,
+          fileKey
+        )
       );
     }
   );
@@ -558,16 +583,24 @@ export function registerTools(
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...properties } = parsed.data;
       return renderResponse(() =>
-        node.sendWithParams("set_node_properties", [nodeId], properties, fileKey)
+        node.sendWithParams(
+          "set_node_properties",
+          [nodeId],
+          properties,
+          fileKey
+        )
       );
     }
   );
 
   server.tool(
     "set_solid_fill",
-    "Replace a node's fill (or stroke) with a single solid paint. Provide a hex color and optional paint opacity. Use set_gradient_fill for gradient paints.",
-    setSolidFillInput.shape,
-    async ({ nodeId, fileKey, ...params }): Promise<ToolResult> => {
+    "Replace a node's fill (or stroke) with a single solid paint. Provide a hex color and optional paint opacity — fillHex/fillOpacity are accepted as aliases. Use set_gradient_fill for gradient paints.",
+    setSolidFillShape.shape,
+    async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(setSolidFillInput, args);
+      if (!parsed.success) return parsed.error;
+      const { nodeId, fileKey, ...params } = parsed.data;
       return renderResponse(() =>
         node.sendWithParams("set_solid_fill", [nodeId], params, fileKey)
       );
@@ -588,8 +621,11 @@ export function registerTools(
   server.tool(
     "set_effects",
     "Replace a node's effects list (drop/inner shadows, layer/background blurs). Pass an empty array to clear all effects. Each entry mirrors the shape returned by get_node's `effects` field.",
-    setEffectsInput.shape,
-    async ({ nodeId, fileKey, ...params }): Promise<ToolResult> => {
+    setEffectsShape.shape,
+    async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(setEffectsInput, args);
+      if (!parsed.success) return parsed.error;
+      const { nodeId, fileKey, ...params } = parsed.data;
       return renderResponse(() =>
         node.sendWithParams("set_effects", [nodeId], params, fileKey)
       );
@@ -601,7 +637,10 @@ export function registerTools(
     "Patch stroke geometry properties: weight, align, dash pattern, cap, join. Use set_solid_fill/set_gradient_fill with target='stroke' to set the paint itself.",
     setStrokePropertiesInput.shape,
     async (args): Promise<ToolResult> => {
-      const parsed = parseToolInput(toolInputSchemas.set_stroke_properties, args);
+      const parsed = parseToolInput(
+        toolInputSchemas.set_stroke_properties,
+        args
+      );
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...params } = parsed.data;
       return renderResponse(() =>
@@ -672,7 +711,10 @@ export function registerTools(
     createImageInput.shape,
     async ({ source, fileKey, ...params }): Promise<ToolResult> => {
       try {
-        const imageBase64 = await loadImageSourceAsBase64(source, process.cwd());
+        const imageBase64 = await loadImageSourceAsBase64(
+          source,
+          process.cwd()
+        );
         return await renderResponse(() =>
           node.sendWithParams(
             "create_image",
@@ -756,7 +798,12 @@ export function registerTools(
     scrollAndZoomIntoViewInput.shape,
     async ({ nodeIds, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
-        node.sendWithParams("scroll_and_zoom_into_view", nodeIds, undefined, fileKey)
+        node.sendWithParams(
+          "scroll_and_zoom_into_view",
+          nodeIds,
+          undefined,
+          fileKey
+        )
       );
     }
   );
@@ -773,10 +820,127 @@ export function registerTools(
   );
 
   server.tool(
+    "get_motion_styles",
+    "List all available animation presets in Figma (Motion API beta). When multiple files are connected, specify fileKey.",
+    toolInputSchemas.get_motion_styles.shape,
+    async ({ fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.send("get_motion_styles", undefined, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "get_node_motion",
+    "Read a node's current animationStyles, animations, manualKeyframeTracks, and timelines (Motion API beta). When multiple files are connected, specify fileKey.",
+    toolInputSchemas.get_node_motion.shape,
+    async ({ nodeId, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.send("get_node_motion", [nodeId], fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "apply_animation_style",
+    "Apply a preset animation style to a node (Motion API beta). When multiple files are connected, specify fileKey.",
+    toolInputSchemas.apply_animation_style.shape,
+    async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(toolInputSchemas.apply_animation_style, args);
+      if (!parsed.success) return parsed.error;
+      const { nodeId, fileKey, ...properties } = parsed.data;
+      return renderResponse(() =>
+        node.sendWithParams(
+          "apply_animation_style",
+          [nodeId],
+          properties,
+          fileKey
+        )
+      );
+    }
+  );
+
+  server.tool(
+    "remove_animation_style",
+    "Remove an applied animation style from a node (Motion API beta). If no animationStyleId is provided, removes all styles. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.remove_animation_style.shape,
+    async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(toolInputSchemas.remove_animation_style, args);
+      if (!parsed.success) return parsed.error;
+      const { nodeId, fileKey, ...properties } = parsed.data;
+      return renderResponse(() =>
+        node.sendWithParams(
+          "remove_animation_style",
+          [nodeId],
+          properties,
+          fileKey
+        )
+      );
+    }
+  );
+
+  server.tool(
+    "apply_manual_keyframe_track",
+    "Applies or replaces the manual Motion keyframe track for a property, paint, or effect field on a node. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.apply_manual_keyframe_track.shape,
+    async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(toolInputSchemas.apply_manual_keyframe_track, args);
+      if (!parsed.success) return parsed.error;
+      const { nodeId, fileKey, ...properties } = parsed.data;
+      return renderResponse(() =>
+        node.sendWithParams(
+          "apply_manual_keyframe_track",
+          [nodeId],
+          properties,
+          fileKey
+        )
+      );
+    }
+  );
+
+  server.tool(
+    "remove_manual_keyframe_track",
+    "Removes the manual Motion keyframe track for a property, paint, or effect field on a node. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.remove_manual_keyframe_track.shape,
+    async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(toolInputSchemas.remove_manual_keyframe_track, args);
+      if (!parsed.success) return parsed.error;
+      const { nodeId, fileKey, ...properties } = parsed.data;
+      return renderResponse(() =>
+        node.sendWithParams(
+          "remove_manual_keyframe_track",
+          [nodeId],
+          properties,
+          fileKey
+        )
+      );
+    }
+  );
+
+  server.tool(
+    "set_timeline_duration",
+    "Sets the duration (in seconds) for a timeline. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.set_timeline_duration.shape,
+    async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(toolInputSchemas.set_timeline_duration, args);
+      if (!parsed.success) return parsed.error;
+      const { nodeId, fileKey, ...properties } = parsed.data;
+      return renderResponse(() =>
+        node.sendWithParams(
+          "set_timeline_duration",
+          [nodeId],
+          properties,
+          fileKey
+        )
+      );
+    }
+  );
+
+  server.tool(
     "save_screenshots",
     "Export screenshots for multiple nodes and save them directly to the local filesystem. Returns metadata only (no base64). When multiple files are connected, specify fileKey.",
     toolInputSchemas.save_screenshots.shape,
-    async ({ items, format, scale, fileKey }): Promise<ToolResult> => {
+    async ({ items, format, scale, clip, fileKey }): Promise<ToolResult> => {
       try {
         // Create a sender bound to the specific fileKey
         const sender: ScreenshotSender = {
@@ -787,7 +951,8 @@ export function registerTools(
           sender,
           items,
           format,
-          scale
+          scale,
+          clip
         );
         return {
           content: [{ type: "text", text: JSON.stringify(result) }],
@@ -807,11 +972,21 @@ export function registerTools(
   );
 }
 
+/**
+ * Saves screenshots for multiple nodes to the local filesystem in batch.
+ * @param sender - Sender that forwards get_screenshot requests to the plugin.
+ * @param items - Screenshot save operations to execute.
+ * @param format - Default export format override.
+ * @param scale - Default export scale override for raster formats.
+ * @param clip - Default clipping override for saved screenshots.
+ * @returns Aggregate result with per-item outcomes.
+ */
 export async function executeSaveScreenshots(
   sender: ScreenshotSender,
   items: SaveScreenshotItemInput[],
   format?: ExportFormat,
-  scale?: number
+  scale?: number,
+  clip?: boolean
 ): Promise<{
   total: number;
   succeeded: number;
@@ -828,7 +1003,8 @@ export async function executeSaveScreenshots(
       index,
       process.cwd(),
       format,
-      scale
+      scale,
+      clip
     );
     results.push(result);
   }
@@ -845,6 +1021,11 @@ export async function executeSaveScreenshots(
   };
 }
 
+/**
+ * Wraps a bridge call and converts the result into a tool result.
+ * @param fn - Bridge call to execute.
+ * @returns Tool result with the bridge response or an error message.
+ */
 async function renderResponse(
   fn: () => Promise<BridgeResponse>,
   transform?: (data: unknown) => unknown
@@ -874,8 +1055,16 @@ async function renderResponse(
   }
 }
 
+/**
+ * Parses raw tool arguments with a Zod schema and returns a typed result or a tool error.
+ * @param schema - Zod schema to validate against.
+ * @param args - Raw arguments from the MCP client.
+ * @returns Parsed data on success, or an error tool result on failure.
+ */
 function parseToolInput<T>(
-  schema: z.ZodType<T>,
+  // Input type is left open so transforming schemas (whose output differs from
+  // their input, e.g. the alias-normalising set_* inputs) can be passed in.
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
   args: unknown
 ): { success: true; data: T } | { success: false; error: ToolResult } {
   const result = schema.safeParse(args);
@@ -892,6 +1081,12 @@ function parseToolInput<T>(
   };
 }
 
+/**
+ * Resolves an output path relative to the workspace and ensures it stays inside it.
+ * @param outputPath - Relative or absolute output path.
+ * @param workspaceRoot - Root directory that must contain the resolved path.
+ * @returns Absolute path inside the workspace root.
+ */
 function resolveAndValidateOutputPath(
   outputPath: string,
   workspaceRoot: string
@@ -909,6 +1104,12 @@ function resolveAndValidateOutputPath(
   return resolvedPath;
 }
 
+/**
+ * Loads an image source as a base64 string from a URL, data URI, or local file.
+ * @param source - Image source: URL, data URI, or local file path.
+ * @param workspaceRoot - Root directory for resolving relative local paths.
+ * @returns Base64-encoded image bytes.
+ */
 async function loadImageSourceAsBase64(
   source: string,
   workspaceRoot: string
@@ -940,6 +1141,11 @@ async function loadImageSourceAsBase64(
   return bytes.toString("base64");
 }
 
+/**
+ * Fetches image bytes from a remote URL with redirect and timeout limits.
+ * @param source - HTTP or HTTPS image URL.
+ * @returns Raw image bytes.
+ */
 async function fetchImageBytes(source: string): Promise<Buffer> {
   let url = new URL(source);
   let redirects = 0;
@@ -948,7 +1154,10 @@ async function fetchImageBytes(source: string): Promise<Buffer> {
     await assertSafeHttpUrl(url);
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
+    const timeout = setTimeout(
+      () => controller.abort(),
+      IMAGE_FETCH_TIMEOUT_MS
+    );
     let resp: Response;
     try {
       resp = await fetch(url, {
@@ -957,7 +1166,9 @@ async function fetchImageBytes(source: string): Promise<Buffer> {
       });
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        throw new Error(`Timed out fetching image after ${IMAGE_FETCH_TIMEOUT_MS}ms`);
+        throw new Error(
+          `Timed out fetching image after ${IMAGE_FETCH_TIMEOUT_MS}ms`
+        );
       }
       throw err;
     } finally {
@@ -967,18 +1178,24 @@ async function fetchImageBytes(source: string): Promise<Buffer> {
     if (resp.status >= 300 && resp.status < 400) {
       const location = resp.headers.get("location");
       if (!location) {
-        throw new Error(`Image redirect missing Location header: ${resp.status}`);
+        throw new Error(
+          `Image redirect missing Location header: ${resp.status}`
+        );
       }
       redirects += 1;
       if (redirects > MAX_IMAGE_REDIRECTS) {
-        throw new Error(`Image fetch exceeded ${MAX_IMAGE_REDIRECTS} redirects`);
+        throw new Error(
+          `Image fetch exceeded ${MAX_IMAGE_REDIRECTS} redirects`
+        );
       }
       url = new URL(location, url);
       continue;
     }
 
     if (!resp.ok) {
-      throw new Error(`Failed to fetch image: ${resp.status} ${resp.statusText}`);
+      throw new Error(
+        `Failed to fetch image: ${resp.status} ${resp.statusText}`
+      );
     }
 
     const contentLength = resp.headers.get("content-length");
@@ -996,6 +1213,10 @@ async function fetchImageBytes(source: string): Promise<Buffer> {
   }
 }
 
+/**
+ * Validates that an image URL uses a safe public HTTP(S) endpoint.
+ * @param url - URL to validate.
+ */
 async function assertSafeHttpUrl(url: URL): Promise<void> {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error("Image URL must use http or https");
@@ -1022,6 +1243,11 @@ async function assertSafeHttpUrl(url: URL): Promise<void> {
   }
 }
 
+/**
+ * Checks whether an IP address is in a private, loopback, or otherwise blocked range.
+ * @param address - IPv4 or IPv6 address string.
+ * @returns True if the address is blocked for SSRF protection.
+ */
 function isBlockedIp(address: string): boolean {
   if (isIP(address) === 4) {
     const [a, b] = address.split(".").map(Number);
@@ -1052,6 +1278,11 @@ function isBlockedIp(address: string): boolean {
   );
 }
 
+/**
+ * Strips surrounding brackets from an IPv6 hostname so it can be parsed as an IP.
+ * @param hostname - Hostname string, possibly bracketed.
+ * @returns Normalized hostname without brackets.
+ */
 function normalizeHostname(hostname: string): string {
   if (hostname.startsWith("[") && hostname.endsWith("]")) {
     return hostname.slice(1, -1);
@@ -1059,6 +1290,12 @@ function normalizeHostname(hostname: string): string {
   return hostname;
 }
 
+/**
+ * Reads a response body up to a maximum byte limit.
+ * @param resp - Fetch response with a readable body.
+ * @param maxBytes - Maximum number of bytes to accept.
+ * @returns Concatenated response bytes.
+ */
 async function readBoundedResponse(
   resp: Response,
   maxBytes: number
@@ -1080,6 +1317,11 @@ async function readBoundedResponse(
   return Buffer.concat(chunks, total);
 }
 
+/**
+ * Infers an export format from a file path extension.
+ * @param outputPath - Output file path.
+ * @returns Export format, or null if the extension is unrecognized.
+ */
 function inferFormatFromPath(outputPath: string): ExportFormat | null {
   const ext = path.extname(outputPath).toLowerCase();
   switch (ext) {
@@ -1097,6 +1339,12 @@ function inferFormatFromPath(outputPath: string): ExportFormat | null {
   }
 }
 
+/**
+ * Resolves the final export format, ensuring it does not conflict with the file extension.
+ * @param format - Explicitly requested format.
+ * @param inferredFormat - Format inferred from the output path extension.
+ * @returns Resolved export format.
+ */
 function resolveExportFormat(
   format: ExportFormat | undefined,
   inferredFormat: ExportFormat | null
@@ -1178,6 +1426,11 @@ async function defaultScreenshotPath(
   return path.join(dir, `${name}-${nodeIdSafe}-${ts}-${index}.${ext}`);
 }
 
+/**
+ * Extracts and validates the first screenshot export from plugin response data.
+ * @param data - Plugin response payload.
+ * @returns Validated screenshot export object.
+ */
 function getSingleScreenshotExport(data: unknown): ScreenshotExport {
   if (!data || typeof data !== "object") {
     throw new Error("Invalid screenshot response from plugin");
@@ -1205,13 +1458,25 @@ function getSingleScreenshotExport(data: unknown): ScreenshotExport {
   return screenshot;
 }
 
+/**
+ * Saves a single screenshot item to the local filesystem.
+ * @param sender - Sender that forwards get_screenshot requests to the plugin.
+ * @param item - Screenshot save request.
+ * @param index - Index of this item in the batch.
+ * @param workspaceRoot - Root directory for resolving output paths.
+ * @param defaultFormat - Default export format override.
+ * @param defaultScale - Default export scale override.
+ * @param defaultClip - Default clipping override.
+ * @returns Result of the save operation.
+ */
 async function saveScreenshotItemToFile(
   sender: ScreenshotSender,
   item: SaveScreenshotItemInput,
   index: number,
   workspaceRoot: string,
   defaultFormat?: ExportFormat,
-  defaultScale?: number
+  defaultScale?: number,
+  defaultClip?: boolean
 ): Promise<SaveScreenshotItemResult> {
   let resolvedOutputPath = item.outputPath;
 
@@ -1226,10 +1491,14 @@ async function saveScreenshotItemToFile(
       inferredFormat
     );
     const resolvedScale = resolveScale(item.scale, defaultScale);
+    const resolvedClip = item.clip ?? defaultClip;
 
     const params: Record<string, unknown> = { format: resolvedFormat };
     if (resolvedScale !== undefined) {
       params.scale = resolvedScale;
+    }
+    if (resolvedClip !== undefined) {
+      params.clip = resolvedClip;
     }
 
     const resp = await sender.sendWithParams(
@@ -1269,6 +1538,12 @@ async function saveScreenshotItemToFile(
   }
 }
 
+/**
+ * Writes base64-encoded bytes to a file, creating parent directories as needed.
+ * @param base64 - Base64-encoded file contents.
+ * @param outputPath - Destination file path.
+ * @returns Number of bytes written.
+ */
 async function writeBase64ToFile(
   base64: string,
   outputPath: string
@@ -1286,6 +1561,12 @@ async function writeBase64ToFile(
   return bytes.length;
 }
 
+/**
+ * Resolves the effective screenshot scale from item and default values.
+ * @param itemScale - Scale specified for the item.
+ * @param defaultScale - Default scale for the batch.
+ * @returns Positive scale value, or undefined if not applicable.
+ */
 function resolveScale(
   itemScale?: number,
   defaultScale?: number
@@ -1297,6 +1578,11 @@ function resolveScale(
   return resolvedScale;
 }
 
+/**
+ * Type guard that checks whether a value is a NodeJS error with an optional code.
+ * @param err - Value to check.
+ * @returns True when the value is an Error instance.
+ */
 function isNodeError(err: unknown): err is NodeJS.ErrnoException {
   return err instanceof Error;
 }

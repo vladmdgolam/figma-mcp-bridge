@@ -47,10 +47,7 @@ export class Leader {
       server.on(
         "upgrade",
         (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
-          const pathname = new URL(
-            req.url ?? "",
-            "http://localhost"
-          ).pathname;
+          const pathname = new URL(req.url ?? "", "http://localhost").pathname;
           if (pathname === "/ws") {
             this.bridge.handleUpgrade(req, socket, head);
           } else {
@@ -60,12 +57,13 @@ export class Leader {
       );
 
       // Fail fast if port is already in use
-      server.once("error", (err: NodeJS.ErrnoException) => {
-        reject(
-          err.code === "EADDRINUSE"
-            ? new Error(`Port ${this.port} already in use`)
-            : err
-        );
+      server.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EADDRINUSE") {
+          reject(new Error(`Port ${this.port} already in use`));
+        } else {
+          console.error("Leader HTTP server error:", err);
+          if (!this.server) reject(err); // reject if during startup
+        }
       });
 
       server.listen(this.port, () => {
@@ -93,35 +91,46 @@ export class Leader {
           return;
         }
 
-        const validationError = validateRpc(
+        const validation = validateRpc(
           rpcReq.tool,
           rpcReq.nodeIds,
           rpcReq.params
         );
-        if (validationError) {
-          this.sendJSON(res, 400, { error: validationError });
+        if (validation.error) {
+          this.sendJSON(res, 400, { error: validation.error });
           return;
         }
 
+        // Forward the schema's output, not the caller's raw object: schemas may
+        // normalise input (e.g. the create_* field aliases), and the plugin only
+        // understands the canonical spelling.
+        const validatedParams = validation.params ?? rpcReq.params;
         const fileKey = rpcReq.fileKey;
 
         // Currently the only tool that is not forwarded to the plugin is save_screenshots
         // If more are added we need to refactor to a better abstraction.
         if (rpcReq.tool === "save_screenshots") {
-          const params = rpcReq.params ?? {};
+          const params = validatedParams ?? {};
           // Create a sender bound to the specific fileKey
           const sender = {
             sendWithParams: (
               requestType: string,
               nodeIds?: string[],
               sendParams?: Record<string, unknown>
-            ) => this.bridge.sendWithParams(requestType, nodeIds, sendParams, fileKey),
+            ) =>
+              this.bridge.sendWithParams(
+                requestType,
+                nodeIds,
+                sendParams,
+                fileKey
+              ),
           };
           const result = await executeSaveScreenshots(
             sender,
             params.items as Parameters<typeof executeSaveScreenshots>[1],
             params.format as ExportFormat | undefined,
-            params.scale as number | undefined
+            params.scale as number | undefined,
+            params.clip as boolean | undefined
           );
           this.sendJSON(res, 200, { data: result });
           return;
@@ -130,7 +139,7 @@ export class Leader {
         const resp = await this.bridge.sendWithParams(
           rpcReq.tool,
           rpcReq.nodeIds,
-          rpcReq.params,
+          validatedParams,
           fileKey
         );
 

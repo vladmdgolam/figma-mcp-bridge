@@ -14,6 +14,7 @@ interface ConnectionEntry {
   ws: WebSocket;
   fileKey: string;
   fileName: string;
+  isAlive: boolean;
 }
 
 export class Bridge {
@@ -21,9 +22,28 @@ export class Bridge {
   private connections = new Map<string, ConnectionEntry>();
   private pending = new Map<string, PendingRequest>();
   private counter = 0;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     this.wss = new WebSocketServer({ noServer: true });
+    this.wss.on("error", (err) => {
+      console.error("WebSocketServer error:", err);
+    });
+
+    this.pingTimer = setInterval(() => {
+      for (const [fileKey, entry] of this.connections) {
+        if (!entry.isAlive) {
+          entry.ws.terminate();
+          this.connections.delete(fileKey);
+          console.error(
+            `Plugin dead (no pong): ${entry.fileName} (${fileKey})`
+          );
+          continue;
+        }
+        entry.isAlive = false;
+        entry.ws.ping();
+      }
+    }, 30_000);
   }
 
   handleUpgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void {
@@ -59,8 +79,18 @@ export class Bridge {
     if (existing) {
       existing.ws.close();
     }
-    this.connections.set(fileKey, { ws, fileKey, fileName });
+    this.connections.set(fileKey, {
+      ws,
+      fileKey,
+      fileName,
+      isAlive: true,
+    });
     console.error(`Plugin connected: ${fileName} (${fileKey})`);
+
+    ws.on("pong", () => {
+      const entry = this.connections.get(fileKey);
+      if (entry && entry.ws === ws) entry.isAlive = true;
+    });
 
     ws.on("message", (data) => {
       try {
@@ -197,8 +227,8 @@ export class Bridge {
 
       const timeout = setTimeout(() => {
         this.pending.delete(requestId);
-        reject(new Error("Request timed out"));
-      }, 30_000);
+        reject(new Error("Request timed out (3 minutes)"));
+      }, 180_000);
 
       this.pending.set(requestId, { resolve, reject, timeout, ws: conn });
 
@@ -222,6 +252,11 @@ export class Bridge {
   }
 
   close(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = null;
+    }
+
     // Reject all pending requests
     for (const [id, { reject, timeout }] of this.pending) {
       clearTimeout(timeout);
