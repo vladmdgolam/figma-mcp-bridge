@@ -10,32 +10,50 @@ import { VERSION } from "./version.js";
 const PORT = 1994;
 
 async function main(): Promise<void> {
-
-  process.on("unhandledRejection", (reason) => {
-    console.error("Unhandled rejection:", reason);
-  });
-
   const node = new Node(PORT);
   const election = new Election(PORT, node);
   await election.start();
 
-  // Graceful shutdown
-  const shutdown = () => {
-    console.error("Shutting down...");
+  let transport: StdioServerTransport | null = null;
+  let shuttingDown = false;
+  const shutdown = async (reason: string, code: number = 0): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.error(`Shutting down (${reason})...`);
+
+    const force = setTimeout(() => {
+      console.error("Shutdown timeout exceeded, forcing exit");
+      process.exit(code);
+    }, 5000);
+    force.unref();
+
     election.stop();
     node.stop();
-    process.exit(0);
+    if (transport) {
+      try {
+        await transport.close();
+      } catch (err) {
+        console.error("Transport close error:", err);
+      }
+    }
+    process.exit(code);
   };
 
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.stdin.on("end", () => void shutdown("stdin end"));
+  process.stdin.on("close", () => void shutdown("stdin close"));
 
-  process.on("uncaughtException", (err) => {
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGHUP", () => void shutdown("SIGHUP"));
+
+  process.on("uncaughtException", async (err) => {
     console.error("Uncaught exception:", err);
-    shutdown();
+    await shutdown("uncaughtException", 1);
+  });
+  process.on("unhandledRejection", (reason) => {
+    console.error("Unhandled rejection:", reason);
   });
 
-  // Create MCP server (stdio transport)
   const server = new McpServer({
     name: "figma-bridge",
     version: VERSION,
@@ -45,7 +63,7 @@ async function main(): Promise<void> {
 
   console.error(`Starting MCP server (role: ${node.roleName})`);
 
-  const transport = new StdioServerTransport();
+  transport = new StdioServerTransport();
   await server.connect(transport);
 }
 
