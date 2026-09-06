@@ -102,7 +102,7 @@ The plugin UI is also de-branded and collapsed to a single line (connection dot 
 | `get_metadata` | Get file name, pages, and current page info |
 | `get_design_context` | Get a depth-limited tree optimized for understanding design context |
 | `get_variable_defs` | Get all variable collections, modes, and values (design tokens) |
-| `get_screenshot` | Export nodes as PNG/SVG/JPG/PDF. 🔱 Writes to a temp file and returns the path by default (pass `inline: true` for base64); 🔱 `isolate: true` hides siblings for a clean capture |
+| `get_screenshot` | Export nodes as PNG/SVG/JPG/PDF/WEBP. 🔱 Writes to a temp file and returns the path by default (pass `inline: true` for base64); 🔱 `isolate: true` hides siblings for a clean capture; 🔱 WEBP is re-encoded server-side from a PNG export (needs `cwebp` on PATH) |
 | `save_screenshots` | Export and save screenshots directly to the local filesystem |
 | `image_fill_export` | 🔱 Resolve an `imageHash` from an IMAGE paint to the actual PNG bytes |
 | `save_children_json` | 🔱 Serialize every direct visible child of a parent to its own JSON file |

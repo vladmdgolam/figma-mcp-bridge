@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { lookup } from "node:dns/promises";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -43,7 +44,22 @@ type ToolResult = {
   isError?: boolean;
 };
 
-export type ExportFormat = "PNG" | "SVG" | "JPG" | "PDF";
+export type ExportFormat = "PNG" | "SVG" | "JPG" | "PDF" | "WEBP";
+
+/**
+ * Formats Figma's exportAsync can actually produce. WEBP is encoded by the
+ * server from a PNG export, so it never reaches the plugin.
+ */
+export type WireExportFormat = Exclude<ExportFormat, "WEBP">;
+
+/**
+ * Maps a requested format to the format the plugin should export.
+ * @param format - Format requested by the caller.
+ * @returns Format to ask the plugin for.
+ */
+export function wireFormatFor(format: ExportFormat): WireExportFormat {
+  return format === "WEBP" ? "PNG" : format;
+}
 
 export interface ScreenshotSender {
   sendWithParams(
@@ -230,7 +246,7 @@ export function registerTools(
         }
 
         const params: Record<string, unknown> = {};
-        if (format) params.format = format;
+        if (format) params.format = wireFormatFor(format);
         if (scale !== undefined && scale > 0) params.scale = scale;
         if (isolate === true) params.isolate = true;
         if (clip !== undefined) params.clip = clip;
@@ -259,15 +275,23 @@ export function registerTools(
 
         const written = await Promise.all(
           exports.map(async (exp, index) => {
+            // The plugin reports the format it exported (PNG for WEBP
+            // requests), so the caller's request wins when deciding the
+            // extension and whether to re-encode.
+            const effectiveFormat: ExportFormat = format ?? exp.format;
             const target =
               outputPath !== undefined && exports.length === 1
                 ? resolveAndValidateOutputPath(outputPath, process.cwd())
-                : await defaultScreenshotPath(exp, index);
-            const bytes = await writeBase64ToFile(exp.base64, target);
+                : await defaultScreenshotPath(exp, index, effectiveFormat);
+            const bytes = await writeExportToFile(
+              exp.base64,
+              target,
+              effectiveFormat
+            );
             return {
               nodeId: exp.nodeId,
               nodeName: exp.nodeName,
-              format: exp.format,
+              format: effectiveFormat,
               width: exp.width,
               height: exp.height,
               outputPath: target,
@@ -1334,6 +1358,8 @@ function inferFormatFromPath(outputPath: string): ExportFormat | null {
       return "JPG";
     case ".pdf":
       return "PDF";
+    case ".webp":
+      return "WEBP";
     default:
       return null;
   }
@@ -1410,16 +1436,19 @@ function extensionForFormat(format: ExportFormat): string {
       return "jpg";
     case "PDF":
       return "pdf";
+    case "WEBP":
+      return "webp";
   }
 }
 
 async function defaultScreenshotPath(
   exp: ScreenshotExport,
-  index: number
+  index: number,
+  format?: ExportFormat
 ): Promise<string> {
   const dir = tempScreenshotDir();
   await mkdir(dir, { recursive: true });
-  const ext = extensionForFormat(exp.format);
+  const ext = extensionForFormat(format ?? exp.format);
   const name = sanitizeForFilename(exp.nodeName) || "node";
   const nodeIdSafe = sanitizeForFilename(exp.nodeId) || "id";
   const ts = Date.now();
@@ -1493,7 +1522,9 @@ async function saveScreenshotItemToFile(
     const resolvedScale = resolveScale(item.scale, defaultScale);
     const resolvedClip = item.clip ?? defaultClip;
 
-    const params: Record<string, unknown> = { format: resolvedFormat };
+    const params: Record<string, unknown> = {
+      format: wireFormatFor(resolvedFormat),
+    };
     if (resolvedScale !== undefined) {
       params.scale = resolvedScale;
     }
@@ -1511,9 +1542,10 @@ async function saveScreenshotItemToFile(
     }
 
     const screenshotExport = getSingleScreenshotExport(resp.data);
-    const bytesWritten = await writeBase64ToFile(
+    const bytesWritten = await writeExportToFile(
       screenshotExport.base64,
-      resolvedOutputPath
+      resolvedOutputPath,
+      resolvedFormat
     );
 
     return {
@@ -1536,6 +1568,83 @@ async function saveScreenshotItemToFile(
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+const DEFAULT_WEBP_QUALITY = 82;
+
+/**
+ * Encodes PNG bytes as WEBP using the `cwebp` binary (libwebp).
+ *
+ * Figma's exportAsync cannot emit webp, so WEBP exports are PNG exports that
+ * the server re-encodes here. cwebp is used rather than a native image
+ * dependency to keep the server dependency-free.
+ *
+ * @param png - PNG bytes to encode.
+ * @param quality - cwebp quality (0-100).
+ * @returns WEBP-encoded bytes.
+ */
+async function encodeWebp(png: Buffer, quality: number): Promise<Buffer> {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "figma-bridge-webp-"));
+  const src = path.join(dir, "in.png");
+  const dst = path.join(dir, "out.webp");
+  try {
+    await writeFile(src, png);
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn("cwebp", ["-quiet", "-q", String(quality), src, "-o", dst]);
+      let stderr = "";
+      proc.stderr.on("data", (chunk) => {
+        stderr += String(chunk);
+      });
+      proc.on("error", (err) => {
+        reject(
+          isNodeError(err) && err.code === "ENOENT"
+            ? new Error(
+                "WEBP export needs the `cwebp` binary (libwebp), which was not found on PATH. " +
+                  "Install it (macOS: `brew install webp`, Debian/Ubuntu: `apt install webp`) " +
+                  "or export PNG/JPG instead."
+              )
+            : err
+        );
+      });
+      proc.on("close", (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`cwebp exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`));
+      });
+    });
+    return await readFile(dst);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Writes an export to disk, re-encoding to WEBP when that format was requested.
+ * @param base64 - Base64-encoded bytes returned by the plugin (PNG for WEBP requests).
+ * @param outputPath - Destination file path.
+ * @param format - Format the caller asked for.
+ * @param quality - WEBP quality, when applicable.
+ * @returns Number of bytes written.
+ */
+async function writeExportToFile(
+  base64: string,
+  outputPath: string,
+  format: ExportFormat,
+  quality: number = DEFAULT_WEBP_QUALITY
+): Promise<number> {
+  if (format !== "WEBP") {
+    return writeBase64ToFile(base64, outputPath);
+  }
+  const webp = await encodeWebp(Buffer.from(base64, "base64"), quality);
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  try {
+    await writeFile(outputPath, webp, { flag: "wx" });
+  } catch (err) {
+    if (isNodeError(err) && err.code === "EEXIST") {
+      throw new Error(`File already exists at outputPath: ${outputPath}`);
+    }
+    throw err;
+  }
+  return webp.length;
 }
 
 /**

@@ -25,7 +25,7 @@ const createFigmaNodeIdSchema = () =>
  * Creates a Zod schema that validates a screenshot export format.
  * @returns A Zod enum schema for export formats.
  */
-const createExportFormatSchema = () => z.enum(["PNG", "SVG", "JPG", "PDF"]);
+const createExportFormatSchema = () => z.enum(["PNG", "SVG", "JPG", "PDF", "WEBP"]);
 
 /**
  * Creates a Zod schema that validates a CSS-style hex color string.
@@ -799,7 +799,7 @@ export const toolInputSchemas = {
       ),
     format: createExportFormatSchema()
       .optional()
-      .describe("Export format: PNG (default) or SVG or JPG or PDF"),
+      .describe("Export format: PNG (default), SVG, JPG, PDF, or WEBP. WEBP is encoded server-side from a PNG export (needs the `cwebp` binary on PATH) since Figma cannot export webp directly."),
     scale: z
       .number()
       .optional()
@@ -981,7 +981,7 @@ export const toolInputSchemas = {
             ),
           format: createExportFormatSchema()
             .optional()
-            .describe("Per-item export format override: PNG, SVG, JPG, or PDF"),
+            .describe("Per-item export format override: PNG, SVG, JPG, PDF, or WEBP"),
           scale: z
             .number()
             .optional()
@@ -998,7 +998,7 @@ export const toolInputSchemas = {
       .describe("List of screenshot save operations to execute in batch"),
     format: createExportFormatSchema()
       .optional()
-      .describe("Default export format: PNG (default) or SVG or JPG or PDF"),
+      .describe("Default export format: PNG (default), SVG, JPG, PDF, or WEBP. WEBP is encoded server-side from a PNG export (needs the `cwebp` binary on PATH)."),
     scale: z
       .number()
       .optional()
