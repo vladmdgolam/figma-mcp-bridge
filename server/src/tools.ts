@@ -245,8 +245,16 @@ export function registerTools(
           );
         }
 
+        // An explicit format wins, but a bare outputPath should still export
+        // what its extension says — otherwise "shot.webp" silently receives
+        // PNG bytes.
+        const requestedFormat: ExportFormat | undefined =
+          outputPath !== undefined
+            ? resolveExportFormat(format, inferFormatFromPath(outputPath))
+            : format;
+
         const params: Record<string, unknown> = {};
-        if (format) params.format = wireFormatFor(format);
+        if (requestedFormat) params.format = wireFormatFor(requestedFormat);
         if (scale !== undefined && scale > 0) params.scale = scale;
         if (isolate === true) params.isolate = true;
         if (clip !== undefined) params.clip = clip;
@@ -278,7 +286,7 @@ export function registerTools(
             // The plugin reports the format it exported (PNG for WEBP
             // requests), so the caller's request wins when deciding the
             // extension and whether to re-encode.
-            const effectiveFormat: ExportFormat = format ?? exp.format;
+            const effectiveFormat: ExportFormat = requestedFormat ?? exp.format;
             const target =
               outputPath !== undefined && exports.length === 1
                 ? resolveAndValidateOutputPath(outputPath, process.cwd())
