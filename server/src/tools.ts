@@ -140,22 +140,32 @@ export function registerTools(
 
   server.tool(
     "get_document",
-    "Get the current Figma page document tree. When multiple files are connected, specify fileKey.",
+    "Get the current Figma page tree, serialized to `depth` levels (default 2) with deeper nodes as {id,name,type} stubs. Prefer get_design_context (selection-aware) or find_nodes to locate a node; a whole page at high depth will not fit in context. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_document.shape,
-    async ({ fileKey }): Promise<ToolResult> => {
+    async ({ depth, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
-        node.send("get_document", undefined, fileKey)
+        node.sendWithParams(
+          "get_document",
+          undefined,
+          { depth: depth ?? 2 },
+          fileKey
+        )
       );
     }
   );
 
   server.tool(
     "get_selection",
-    "Get the currently selected nodes in Figma. When multiple files are connected, specify fileKey.",
+    "Get the nodes currently selected in Figma, serialized to `depth` levels (default 2) with deeper nodes as {id,name,type} stubs. Pass a child id to get_node to drill in further. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_selection.shape,
-    async ({ fileKey }): Promise<ToolResult> => {
+    async ({ depth, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
-        node.send("get_selection", undefined, fileKey)
+        node.sendWithParams(
+          "get_selection",
+          undefined,
+          { depth: depth ?? 2 },
+          fileKey
+        )
       );
     }
   );
@@ -196,7 +206,7 @@ export function registerTools(
 
   server.tool(
     "get_design_context",
-    "Get the design context for the current selection or page. Returns a summarized tree structure optimized for understanding the current design context. When multiple files are connected, specify fileKey.",
+    "START HERE when the user says they selected something in Figma. Returns the current selection if there is one, otherwise the current page, serialized to `depth` levels (default 2) with deeper nodes as {id,name,type} stubs plus a childCount, alongside the file name and page. Use the ids it returns with get_node (add `fields` to project only what you need) or find_nodes to drill in. Keep depth at 2-3; higher depths on a large frame will not fit in context. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_design_context.shape,
     async ({ depth, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = {};
@@ -1114,6 +1124,22 @@ function parseToolInput<T>(
 }
 
 /**
+ * Returns the directory that written files must stay inside.
+ *
+ * Defaults to the server's cwd, but that is the cwd of whichever client
+ * happened to start the leader process — with multiple editors open, one
+ * project's session ends up enforcing another project's directory. Set
+ * FIGMA_BRIDGE_OUTPUT_ROOT to pin it somewhere both sides can write.
+ *
+ * @param workspaceRoot - Fallback root, normally process.cwd().
+ * @returns Absolute path of the write root.
+ */
+function resolveOutputRoot(workspaceRoot: string): string {
+  const configured = process.env.FIGMA_BRIDGE_OUTPUT_ROOT?.trim();
+  return path.resolve(configured && configured.length > 0 ? configured : workspaceRoot);
+}
+
+/**
  * Resolves an output path relative to the workspace and ensures it stays inside it.
  * @param outputPath - Relative or absolute output path.
  * @param workspaceRoot - Root directory that must contain the resolved path.
@@ -1123,14 +1149,14 @@ function resolveAndValidateOutputPath(
   outputPath: string,
   workspaceRoot: string
 ): string {
-  const resolvedRoot = path.resolve(workspaceRoot);
+  const resolvedRoot = resolveOutputRoot(workspaceRoot);
   const resolvedPath = path.resolve(resolvedRoot, outputPath);
   const relativePath = path.relative(resolvedRoot, resolvedPath);
   const escapesRoot =
     relativePath.startsWith("..") || path.isAbsolute(relativePath);
   if (escapesRoot) {
     throw new Error(
-      `outputPath must be inside the MCP server working directory: ${resolvedRoot}`
+      `outputPath must be inside ${resolvedRoot}. That root is the MCP server's working directory, which belongs to whichever client started the bridge — set FIGMA_BRIDGE_OUTPUT_ROOT on the server to point somewhere else, or write inside that directory and move the file afterwards.`
     );
   }
   return resolvedPath;
@@ -1156,14 +1182,14 @@ async function loadImageSourceAsBase64(
     return dataUrlMatch[1];
   }
 
-  const resolvedRoot = path.resolve(workspaceRoot);
+  const resolvedRoot = resolveOutputRoot(workspaceRoot);
   const resolvedPath = path.resolve(resolvedRoot, source);
   const relativePath = path.relative(resolvedRoot, resolvedPath);
   const escapesRoot =
     relativePath.startsWith("..") || path.isAbsolute(relativePath);
   if (escapesRoot) {
     throw new Error(
-      `image source must be inside the MCP server working directory: ${resolvedRoot}`
+      `image source must be inside ${resolvedRoot} (resolved from "${source}"). That root is the MCP server's working directory — set FIGMA_BRIDGE_OUTPUT_ROOT to change it, or pass a path inside it.`
     );
   }
   const bytes = await readFile(resolvedPath);

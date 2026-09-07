@@ -15,10 +15,20 @@ import { z } from "zod";
  */
 const createFigmaNodeIdSchema = () =>
   z
-    .string()
-    .regex(
-      /^(\d+:\d+|I\d+:\d+(;\d+:\d+)+)$/,
-      "Node ID must use colon format, e.g. '4029:12345', or instance-child format 'I12740:17806;12740:17793'"
+    .preprocess(
+      // Figma URLs carry `node-id=4029-12345`, and exported filenames use the
+      // same hyphen form, so it leaks into agent calls constantly. Accept it
+      // and normalise rather than failing late with a regex error.
+      (value) =>
+        typeof value === "string" && /^I?\d+-\d+(;\d+-\d+)*$/.test(value)
+          ? value.replace(/-/g, ":")
+          : value,
+      z
+        .string()
+        .regex(
+          /^(\d+:\d+|I\d+:\d+(;\d+:\d+)+)$/,
+          "Node ID must use colon format, e.g. '4029:12345', or instance-child format 'I12740:17806;12740:17793'"
+        )
     );
 
 /**
@@ -742,10 +752,26 @@ export const createImageInput = z.object({
 
 export const toolInputSchemas = {
   get_document: z.object({
+    depth: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "How many levels of children to serialize fully (default 2). Deeper levels are returned as {id,name,type} stubs with a childCount. Raise it only for a small page — an unbounded page tree will not fit in context."
+      ),
     fileKey: fileKeyField,
   }),
 
   get_selection: z.object({
+    depth: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "How many levels of children to serialize fully (default 2). Deeper levels are returned as {id,name,type} stubs with a childCount."
+      ),
     fileKey: fileKeyField,
   }),
 

@@ -101,6 +101,7 @@ type SerializedNode = {
   styles?: SerializedStyles;
   children?: SerializedNode[];
   childCount?: number;
+  truncated?: boolean;
 };
 
 const isMixed = (value: unknown): value is symbol => typeof value === "symbol";
@@ -366,7 +367,27 @@ const serializeStyles = (node: SceneNode): SerializedStyles => {
   return styles;
 };
 
-export const serializeNode = (node: SceneNode): SerializedNode => {
+/**
+ * Serializes a node, descending at most `depth` levels into its children.
+ *
+ * `depth` counts levels of *fully serialized* descendants: depth 0 returns the
+ * node itself with each visible child reduced to an `{id, name, type}` stub,
+ * depth 1 fully serializes the direct children and stubs the grandchildren, and
+ * so on. Stubbed levels also carry `childCount` so a caller can tell an empty
+ * container from a truncated one. Pass `Infinity` for the whole subtree.
+ *
+ * Truncating here rather than in the caller is what keeps a `get_node` on a big
+ * frame from serializing tens of thousands of descendants only to throw them
+ * away — the payload never gets built in the first place.
+ *
+ * @param node - Node to serialize.
+ * @param depth - Levels of children to serialize fully. Default Infinity.
+ * @returns The serialized node.
+ */
+export const serializeNode = (
+  node: SceneNode,
+  depth: number = Infinity
+): SerializedNode => {
   const base: SerializedNode = {
     id: node.id,
     name: node.name,
@@ -380,11 +401,26 @@ export const serializeNode = (node: SceneNode): SerializedNode => {
   }
 
   if ("children" in node) {
+    const visibleChildren = node.children.filter(
+      (child) => child.visible !== false
+    );
+
+    if (depth <= 0) {
+      return {
+        ...base,
+        children: visibleChildren.map((child) => ({
+          id: child.id,
+          name: child.name,
+          type: child.type,
+        })),
+        childCount: visibleChildren.length,
+        truncated: visibleChildren.length > 0 ? true : undefined,
+      };
+    }
+
     return {
       ...base,
-      children: node.children
-        .filter((child) => child.visible !== false)
-        .map((child) => serializeNode(child)),
+      children: visibleChildren.map((child) => serializeNode(child, depth - 1)),
     };
   }
 

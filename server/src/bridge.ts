@@ -151,6 +151,13 @@ export class Bridge {
     if (fileKey) {
       const entry = this.connections.get(fileKey);
       if (!entry) {
+        // A stale key is the norm, not an anomaly: local files get an
+        // `unsaved-*` key that changes every time the file is reopened. When
+        // exactly one file is connected there is no ambiguity about what the
+        // caller meant, so serve it instead of making them re-handshake.
+        if (this.connections.size === 1) {
+          return this.connections.values().next().value!.ws;
+        }
         const available = this.listConnectedFiles();
         const hint =
           available.length > 0

@@ -19,9 +19,6 @@ friction. Items already shipped are omitted.
 
 ## Payload-shape improvements
 
-- **Default depth=2 on `get_document` / `get_selection`.** Currently
-  unlimited; matches `get_design_context`'s sane default. Unlimited
-  becomes opt-in.
 - **Filtering on `get_styles` / `get_variable_defs`.** Add `type` /
   name-regex / pagination. Today both return every style or every
   variable in the file.
@@ -35,10 +32,8 @@ friction. Items already shipped are omitted.
 
 ## Discoverability + error-quality
 
-- **Auto-convert hyphenated node IDs** (`44-2057` → `44:2057`)
-  server-side. The hyphen form leaks in from URL paths and saved
-  filenames; today it fails late with a Zod error.
-- **Rewrite `get_design_context` description.** Currently
+- ~~**Rewrite `get_design_context` description.**~~ Shipped 2026-09-07.
+  Old text: Currently
   "summarized tree structure optimized for understanding the current
   design context" — say what it actually does: selection if present
   else current page, depth=2.
@@ -52,7 +47,8 @@ friction. Items already shipped are omitted.
 - **Typed error for `get_screenshot` on DOCUMENT/PAGE.** Silently
   filters then says "No nodes to export"; better to fail with a typed
   error explaining pages aren't exportable.
-- **`create_image` cwd caveat** — when a relative `source` doesn't
+- **`create_image` cwd caveat** (partly shipped 2026-09-07: the error now
+  names the resolved root and FIGMA_BRIDGE_OUTPUT_ROOT) — when a relative `source` doesn't
   resolve, surface the resolved absolute path in the error so the
   agent can tell whether it's a cwd mismatch.
 

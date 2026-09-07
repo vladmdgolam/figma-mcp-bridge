@@ -77,6 +77,11 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 Everything upstream does, plus a set of changes aimed at keeping an agent's context small and its workflows atomic:
 
 - **`get_node({ fields })` — server-side projection.** Pass dot-paths like `['bounds', 'styles.fills', 'children.styles.fills']`; the server prunes everything else, recursing into arrays and always keeping `id`/`name`/`type`. Takes ~300 KB node payloads down to ~5 KB.
+- **`depth` is honored everywhere, and truncation happens during serialization.** `get_node`'s `depth` was previously accepted and ignored, so every call returned the whole subtree no matter what the description promised; `get_design_context` serialized the full tree and then threw the excess away. Both now stop at the limit, and `get_document`/`get_selection` default to depth 2 instead of unbounded. Truncated levels carry `childCount` and `truncated: true`.
+- **Node IDs accept the hyphen form.** `4029-12345` (what Figma URLs and exported filenames use) is normalised to `4029:12345` instead of failing a regex check.
+- **`find_nodes` tolerates inline regex flags.** A leading `(?i)` — Python syntax that JavaScript rejects as an invalid group — is lifted onto the RegExp flags.
+- **A stale `fileKey` falls back to the only connected file.** Local files get an `unsaved-*` key that changes on every reopen; with one file connected there is nothing to disambiguate.
+- **`FIGMA_BRIDGE_OUTPUT_ROOT` pins the write root.** Written files are otherwise confined to the server's cwd, which belongs to whichever client started the bridge — with two editors open, one project's session ends up enforcing another project's directory.
 - **`get_screenshot` writes to disk by default.** Returns `{path, width, height, format, scale}` rather than a base64 blob that swamps the transcript. `inline: true` restores the old behavior; `outputPath` picks the destination.
 - **`get_screenshot({ isolate: true })`.** Hides every sibling of each target before exporting and restores them in a `finally` — safe even if the export throws. One call instead of a manual hide/export/restore loop.
 - **`find_nodes`.** Locate nodes by name substring, regex, and/or type without serializing subtrees. Hidden subtrees are skipped unless `includeHidden`.
@@ -93,14 +98,14 @@ The plugin UI is also de-branded and collapsed to a single line (connection dot 
 | Tool | Description |
 |------|-------------|
 | `list_files` | List all connected Figma files (supports multi-file workflows) |
-| `get_document` | Get the current Figma page document tree |
-| `get_selection` | Get the currently selected nodes in Figma |
+| `get_document` | Get the current Figma page tree. 🔱 Depth-limited (default 2); deeper nodes come back as `{id,name,type}` stubs with a `childCount` |
+| `get_selection` | Get the currently selected nodes in Figma. 🔱 Depth-limited (default 2), same stub behavior as `get_document` |
 | `get_node` | Get a specific Figma node by ID (colon format, e.g. `4029:12345`). Pass `fields` to project only the paths you need — see [fork additions](#what-this-fork-adds) |
 | `find_nodes` | 🔱 Search the tree by name substring, regex, and/or node type; returns lightweight rows |
 | `get_node_by_path` | 🔱 Resolve a slash-separated chain of child names (`'Hero/Card/Title'`) to a node |
 | `get_styles` | Get all local paint, text, effect, and grid styles |
 | `get_metadata` | Get file name, pages, and current page info |
-| `get_design_context` | Get a depth-limited tree optimized for understanding design context |
+| `get_design_context` | Selection if there is one, else the current page, depth-limited (default 2). The right first call in a design-to-code task |
 | `get_variable_defs` | Get all variable collections, modes, and values (design tokens) |
 | `get_screenshot` | Export nodes as PNG/SVG/JPG/PDF/WEBP. 🔱 Writes to a temp file and returns the path by default (pass `inline: true` for base64); 🔱 `isolate: true` hides siblings for a clean capture; 🔱 WEBP is re-encoded server-side from a PNG export (needs `cwebp` on PATH) |
 | `save_screenshots` | Export and save screenshots directly to the local filesystem |
@@ -135,6 +140,12 @@ The plugin UI is also de-branded and collapsed to a single line (connection dot 
 | `delete_nodes` | Delete nodes with explicit confirmation |
 
 All tools accept an optional `fileKey` parameter when multiple Figma files are connected. Use `list_files` to discover connected files and their keys.
+
+### Configuration
+
+| Env var | Effect |
+|---|---|
+| `FIGMA_BRIDGE_OUTPUT_ROOT` | Directory that `outputPath` / `outputDir` / `create_image` sources must stay inside. Defaults to the MCP server's working directory, which is the cwd of whichever client started the bridge process — set this when several projects share one bridge. |
 
 ### Editing Notes
 

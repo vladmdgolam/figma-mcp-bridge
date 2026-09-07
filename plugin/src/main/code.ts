@@ -453,11 +453,24 @@ const findNodesInTree = async (
   const lowerType = options.type?.toUpperCase();
   let regex: RegExp | undefined;
   if (options.regex) {
+    // Agents routinely send Python-style inline flags like "(?i)foo|bar",
+    // which JavaScript rejects as an invalid group. Lift a leading inline
+    // flag group onto the RegExp flags instead of failing the whole search.
+    let source = options.regex;
+    let flags = "";
+    const inlineFlags = source.match(/^\(\?([a-z]+)\)/);
+    if (inlineFlags) {
+      flags = inlineFlags[1]
+        .split("")
+        .filter((f) => "imsu".includes(f))
+        .join("");
+      source = source.slice(inlineFlags[0].length);
+    }
     try {
-      regex = new RegExp(options.regex);
+      regex = new RegExp(source, flags);
     } catch (err) {
       throw new Error(
-        `Invalid regex: ${err instanceof Error ? err.message : String(err)}`
+        `Invalid regex: ${err instanceof Error ? err.message : String(err)}. Note: this is a JavaScript RegExp — inline flags like (?i) are not supported, use the 'name' option for case-insensitive substring matching.`
       );
     }
   }
@@ -601,6 +614,24 @@ const requireEditorMode = (toolName: RequestType): void => {
   }
 };
 
+/**
+ * Reads the `depth` param off a request, falling back to a per-tool default.
+ *
+ * Kept permissive on purpose: the server validates the shape, so anything
+ * non-numeric arriving here means an older server build and should get the
+ * safe default rather than an error.
+ *
+ * @param request - Incoming server request.
+ * @param fallback - Depth to use when the request carries none.
+ * @returns Depth to pass to serializeNode.
+ */
+const requestedDepth = (request: ServerRequest, fallback: number): number => {
+  const depth = request.params?.depth;
+  return typeof depth === "number" && Number.isFinite(depth) && depth >= 0
+    ? depth
+    : fallback;
+};
+
 const handleRequest = async (
   request: ServerRequest
 ): Promise<PluginResponse> => {
@@ -613,13 +644,15 @@ const handleRequest = async (
         return {
           type: request.type,
           requestId: request.requestId,
-          data: serializeNode(figma.currentPage),
+          data: serializeNode(figma.currentPage, requestedDepth(request, 2)),
         };
       case "get_selection":
         return {
           type: request.type,
           requestId: request.requestId,
-          data: figma.currentPage.selection.map((node) => serializeNode(node)),
+          data: figma.currentPage.selection.map((node) =>
+            serializeNode(node, requestedDepth(request, 2))
+          ),
         };
       case "get_node": {
         const nodeId = request.nodeIds && request.nodeIds[0];
@@ -633,7 +666,7 @@ const handleRequest = async (
         return {
           type: request.type,
           requestId: request.requestId,
-          data: serializeNode(node as SceneNode),
+          data: serializeNode(node as SceneNode, requestedDepth(request, 0)),
         };
       }
       case "get_styles": {
@@ -692,59 +725,19 @@ const handleRequest = async (
         };
       }
       case "get_design_context": {
-        const depth =
-          typeof request.params?.depth === "number" ? request.params.depth : 2;
-        const serializeWithDepth = async (
-          node: unknown,
-          currentDepth: number
-        ): Promise<ReturnType<typeof serializeNode>> => {
-          const serialized = serializeNode(node);
-          if (currentDepth >= depth && serialized.children) {
-            // Truncate children at depth limit, but show count
-            return {
-              ...serialized,
-              children: undefined,
-              childCount:
-                (node as ChildrenMixin & SceneNode).children?.filter(
-                  (c) => c.visible !== false
-                ).length ?? 0,
-            } as ReturnType<typeof serializeNode> & { childCount: number };
-          }
-          if (serialized.children) {
-            const childNodes = await Promise.all(
-              serialized.children.map((child) =>
-                figma.getNodeByIdAsync(child.id)
-              )
-            );
-            const serializedChildren = await Promise.all(
-              childNodes
-                .filter(
-                  (n): n is SceneNode =>
-                    n !== null &&
-                    n.type !== "DOCUMENT" &&
-                    "visible" in n &&
-                    n.visible !== false
-                )
-                .map((n) => serializeWithDepth(n, currentDepth + 1))
-            );
-            return {
-              ...serialized,
-              children: serializedChildren,
-            };
-          }
-          return serialized;
-        };
+        // serializeNode truncates at the depth limit itself, so the whole
+        // subtree is never built. This used to serialize everything and then
+        // throw away the excess, which is what made deep contexts overflow.
+        const depth = requestedDepth(request, 2);
 
         const selection = figma.currentPage.selection;
         const contextNodes =
           selection.length > 0
-            ? await Promise.all(
-                selection.map((node) => serializeWithDepth(node, 0))
-              )
+            ? selection.map((node) => serializeNode(node, depth))
             : [
-                await serializeWithDepth(
+                serializeNode(
                   figma.currentPage as unknown as SceneNode,
-                  0
+                  depth
                 ),
               ];
 
