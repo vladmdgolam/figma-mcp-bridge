@@ -31,11 +31,7 @@ export class Node {
     }
   }
 
-  send(
-    requestType: string,
-    nodeIds?: string[],
-    fileKey?: string
-  ): Promise<BridgeResponse> {
+  send(requestType: string, nodeIds?: string[], fileKey?: string): Promise<BridgeResponse> {
     return this.sendWithParams(requestType, nodeIds, undefined, fileKey);
   }
 
@@ -46,9 +42,7 @@ export class Node {
     fileKey?: string
   ): Promise<BridgeResponse> {
     if (this._role === Role.Leader && this.leader) {
-      return this.leader
-        .getBridge()
-        .sendWithParams(requestType, nodeIds, params, fileKey);
+      return this.leader.getBridge().sendWithParams(requestType, nodeIds, params, fileKey);
     }
     return this.follower.sendWithParams(requestType, nodeIds, params, fileKey);
   }

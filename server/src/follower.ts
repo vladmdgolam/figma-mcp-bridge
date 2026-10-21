@@ -6,11 +6,7 @@ import type { BridgeResponse, ConnectedFile, RPCRequest, RPCResponse } from "./t
 export class Follower {
   constructor(private leaderUrl: string) {}
 
-  send(
-    requestType: string,
-    nodeIds?: string[],
-    fileKey?: string
-  ): Promise<BridgeResponse> {
+  send(requestType: string, nodeIds?: string[], fileKey?: string): Promise<BridgeResponse> {
     return this.sendWithParams(requestType, nodeIds, undefined, fileKey);
   }
 
@@ -36,9 +32,7 @@ export class Follower {
       // The leader answers validation failures with a 400 whose body names the
       // offending field — surface it instead of a bare status code (#35).
       const body = (await response.json().catch(() => null)) as RPCResponse | null;
-      throw new Error(
-        body?.error ?? `Leader returned status ${response.status}`
-      );
+      throw new Error(body?.error ?? `Leader returned status ${response.status}`);
     }
 
     const rpcResp = (await response.json()) as RPCResponse;

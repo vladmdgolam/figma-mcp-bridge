@@ -44,17 +44,14 @@ export class Leader {
         res.end("Not found");
       });
 
-      server.on(
-        "upgrade",
-        (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
-          const pathname = new URL(req.url ?? "", "http://localhost").pathname;
-          if (pathname === "/ws") {
-            this.bridge.handleUpgrade(req, socket, head);
-          } else {
-            socket.destroy();
-          }
+      server.on("upgrade", (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
+        const pathname = new URL(req.url ?? "", "http://localhost").pathname;
+        if (pathname === "/ws") {
+          this.bridge.handleUpgrade(req, socket, head);
+        } else {
+          socket.destroy();
         }
-      );
+      });
 
       // Fail fast if port is already in use
       server.on("error", (err: NodeJS.ErrnoException) => {
@@ -91,11 +88,7 @@ export class Leader {
           return;
         }
 
-        const validation = validateRpc(
-          rpcReq.tool,
-          rpcReq.nodeIds,
-          rpcReq.params
-        );
+        const validation = validateRpc(rpcReq.tool, rpcReq.nodeIds, rpcReq.params);
         if (validation.error) {
           this.sendJSON(res, 400, { error: validation.error });
           return;
@@ -117,13 +110,7 @@ export class Leader {
               requestType: string,
               nodeIds?: string[],
               sendParams?: Record<string, unknown>
-            ) =>
-              this.bridge.sendWithParams(
-                requestType,
-                nodeIds,
-                sendParams,
-                fileKey
-              ),
+            ) => this.bridge.sendWithParams(requestType, nodeIds, sendParams, fileKey),
           };
           const result = await executeSaveScreenshots(
             sender,
@@ -143,11 +130,7 @@ export class Leader {
           fileKey
         );
 
-        this.sendJSON(
-          res,
-          200,
-          resp.error ? { error: resp.error } : { data: resp.data }
-        );
+        this.sendJSON(res, 200, resp.error ? { error: resp.error } : { data: resp.data });
       } catch (err) {
         this.sendJSON(res, 200, {
           error: err instanceof Error ? err.message : String(err),
@@ -156,11 +139,7 @@ export class Leader {
     });
   }
 
-  private sendJSON(
-    res: http.ServerResponse,
-    status: number,
-    body: RPCResponse
-  ): void {
+  private sendJSON(res: http.ServerResponse, status: number, body: RPCResponse): void {
     res.writeHead(status, { "Content-Type": "application/json" });
     res.end(JSON.stringify(body));
   }

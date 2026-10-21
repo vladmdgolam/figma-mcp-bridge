@@ -35,9 +35,7 @@ export class Bridge {
         if (!entry.isAlive) {
           entry.ws.terminate();
           this.connections.delete(fileKey);
-          console.error(
-            `Plugin dead (no pong): ${entry.fileName} (${fileKey})`
-          );
+          console.error(`Plugin dead (no pong): ${entry.fileName} (${fileKey})`);
           continue;
         }
         entry.isAlive = false;
@@ -54,9 +52,7 @@ export class Bridge {
     }
 
     const url = new URL(request.url, "http://localhost");
-    const { fileKey, fileName = "Unknown" } = Object.fromEntries(
-      url.searchParams
-    );
+    const { fileKey, fileName = "Unknown" } = Object.fromEntries(url.searchParams);
 
     if (!fileKey) {
       console.error("Plugin connected without fileKey, rejecting");
@@ -69,11 +65,7 @@ export class Bridge {
     });
   }
 
-  private handleConnection(
-    ws: WebSocket,
-    fileKey: string,
-    fileName: string
-  ): void {
+  private handleConnection(ws: WebSocket, fileKey: string, fileName: string): void {
     // Replace existing connection for the same file
     const existing = this.connections.get(fileKey);
     if (existing) {
@@ -112,10 +104,7 @@ export class Bridge {
         this.connections.delete(fileKey);
         console.error(`Plugin disconnected: ${fileName} (${fileKey})`);
       }
-      this.rejectPendingForSocket(
-        ws,
-        `Plugin disconnected: ${fileName} (${fileKey})`
-      );
+      this.rejectPendingForSocket(ws, `Plugin disconnected: ${fileName} (${fileKey})`);
     });
 
     ws.on("error", (err) => {
@@ -124,10 +113,7 @@ export class Bridge {
       if (current?.ws === ws) {
         this.connections.delete(fileKey);
       }
-      this.rejectPendingForSocket(
-        ws,
-        `Plugin connection error (${fileName}): ${err.message}`
-      );
+      this.rejectPendingForSocket(ws, `Plugin connection error (${fileName}): ${err.message}`);
     });
   }
 
@@ -169,9 +155,7 @@ export class Bridge {
     }
 
     if (this.connections.size === 0) {
-      throw new Error(
-        "No plugin connected. Open a Figma file and run the bridge plugin."
-      );
+      throw new Error("No plugin connected. Open a Figma file and run the bridge plugin.");
     }
 
     if (this.connections.size === 1) {
@@ -192,11 +176,7 @@ export class Bridge {
     }));
   }
 
-  send(
-    requestType: string,
-    nodeIds?: string[],
-    fileKey?: string
-  ): Promise<BridgeResponse> {
+  send(requestType: string, nodeIds?: string[], fileKey?: string): Promise<BridgeResponse> {
     return this.sendWithParams(requestType, nodeIds, undefined, fileKey);
   }
 

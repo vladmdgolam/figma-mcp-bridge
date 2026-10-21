@@ -1,7 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { lookup } from "node:dns/promises";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import type { Stats } from "node:fs";
+import { mkdir, mkdtemp, open, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { isIP } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -10,11 +11,17 @@ import type { Node } from "./node.js";
 import {
   createFrameInput,
   createImageInput,
+  createSvgInput,
+  createPageInput,
+  importHtmlLayersInput,
   createShapeShape,
   createTextShape,
   createShapeInput,
+  createShapeWithTextInput,
+  createShapeWithTextShape,
+  createSectionShape,
   createTextInput,
-  setNodePropertiesInput,
+  setNodePropertiesShape,
   setGradientFillInput,
   setSolidFillInput,
   setSolidFillShape,
@@ -29,6 +36,14 @@ import {
   ungroupNodeInput,
   setTextPropertiesShape,
   setTextPropertiesInput,
+  createConnectorBase,
+  fitToContentInput,
+  distributeInput,
+  alignToGridInput,
+  placeBelowInput,
+  placeRightOfInput,
+  duplicateWithOffsetInput,
+  MAX_SVG_BYTES,
   toolInputSchemas,
 } from "./schema.js";
 import { projectFields } from "./projection.js";
@@ -105,14 +120,10 @@ interface SaveScreenshotItemResult {
  * @param node - The node coordinator for leader/follower routing.
  * @param port - The port used for follower-to-leader HTTP calls.
  */
-export function registerTools(
-  server: McpServer,
-  node: Node,
-  port: number
-): void {
+export function registerTools(server: McpServer, node: Node, port: number): void {
   server.tool(
     "list_files",
-    "List all currently connected Figma files. Returns fileKey and fileName for each. Use the fileKey to target a specific file in other tools.",
+    "List all currently connected Figma/FigJam files. Returns fileKey and fileName for each. Use the fileKey to target a specific file in other tools.",
     async (): Promise<ToolResult> => {
       try {
         let files = node.listConnectedFiles();
@@ -140,30 +151,58 @@ export function registerTools(
 
   server.tool(
     "get_document",
-    "Get the current Figma page tree, serialized to `depth` levels (default 2) with deeper nodes as {id,name,type} stubs. Prefer get_design_context (selection-aware) or find_nodes to locate a node; a whole page at high depth will not fit in context. When multiple files are connected, specify fileKey.",
+    "Get the current Figma/FigJam page tree, serialized to `depth` levels (default 2) with deeper nodes as {id,name,type} stubs. Prefer get_design_context (selection-aware) or find_nodes to locate a node; a whole page at high depth will not fit in context. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_document.shape,
     async ({ depth, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
-        node.sendWithParams(
-          "get_document",
-          undefined,
-          { depth: depth ?? 2 },
-          fileKey
-        )
+        node.sendWithParams("get_document", undefined, { depth: depth ?? 2 }, fileKey)
       );
     }
   );
 
   server.tool(
     "get_selection",
-    "Get the nodes currently selected in Figma, serialized to `depth` levels (default 2) with deeper nodes as {id,name,type} stubs. Pass a child id to get_node to drill in further. When multiple files are connected, specify fileKey.",
+    "Get the nodes currently selected in Figma/FigJam, serialized to `depth` levels (default 2) with deeper nodes as {id,name,type} stubs. Pass a child id to get_node to drill in further. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_selection.shape,
     async ({ depth, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
+        node.sendWithParams("get_selection", undefined, { depth: depth ?? 2 }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "get_layout_tree",
+    "Read absolute node transforms and layout bounds for a capture root. Separate screenshot calls are non-atomic.",
+    toolInputSchemas.get_layout_tree.shape,
+    async ({ rootId, maxNodes, fileKey }): Promise<ToolResult> =>
+      renderResponse(() => node.sendWithParams("get_layout_tree", [rootId], { maxNodes }, fileKey))
+  );
+
+  server.tool(
+    "get_node",
+    "Get a specific Figma/FigJam node by ID. Accepts top-level IDs like '4029:12345' and instance-child IDs like 'I12740:17806;12740:17793'. Never use hyphens. By default returns the node with its children as {id,name,type} stubs; call get_node again on a child ID to drill in. Pass `depth` for more levels at once, or a large value for the full subtree. Pass `fields` to project only specific dot-paths (e.g. ['bounds','styles.fills']) and trim the response. Pass includePrototype: true to also get the prototype interactions on the node and its descendants. Omitted style fields are at Figma defaults (opacity=1, visible=true, blendMode=NORMAL/PASS_THROUGH, rotation=0, cornerRadius=0, constraints={MIN,MIN}; empty fills/strokes/effects mean none set). When multiple files are connected, specify fileKey.",
+    toolInputSchemas.get_node.shape,
+    async ({ nodeId, depth, fields, includePrototype, fileKey }): Promise<ToolResult> => {
+      const params: Record<string, unknown> = { depth: depth ?? 0 };
+      if (includePrototype !== undefined) params.includePrototype = includePrototype;
+      return renderResponse(
+        () => node.sendWithParams("get_node", [nodeId], params, fileKey),
+        (data) => projectFields(data, fields)
+      );
+    }
+  );
+
+  server.tool(
+    "get_prototype_connections",
+    "Read-only. List the prototype interactions on a node and all its descendants, including instance sublayers. Each reaction is Figma's own trigger and actions (navigate/swap/overlay/scroll-to/change-to, back, close, URL, set variable/mode, conditional blocks, media), with each destination resolved to its name, screen, and page, and variables and modes resolved to names. Also returns the page's flow starting points. Not available in FigJam. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.get_prototype_connections.shape,
+    async ({ nodeId, fileKey, ...params }): Promise<ToolResult> => {
+      return renderResponse(() =>
         node.sendWithParams(
-          "get_selection",
-          undefined,
-          { depth: depth ?? 2 },
+          "get_prototype_connections",
+          nodeId ? [nodeId] : undefined,
+          params,
           fileKey
         )
       );
@@ -171,15 +210,12 @@ export function registerTools(
   );
 
   server.tool(
-    "get_node",
-    "Get a specific Figma node by ID. Accepts top-level IDs like '4029:12345' and instance-child IDs like 'I12740:17806;12740:17793'. Never use hyphens. By default returns the node with its children as {id,name,type} stubs; call get_node again on a child ID to drill in. Pass `depth` for more levels at once, or a large value for the full subtree. Pass `fields` to project only specific dot-paths (e.g. ['bounds','styles.fills']) and trim the response. Omitted style fields are at Figma defaults (opacity=1, visible=true, blendMode=NORMAL/PASS_THROUGH, rotation=0, cornerRadius=0, constraints={MIN,MIN}; empty fills/strokes/effects mean none set). When multiple files are connected, specify fileKey.",
-    toolInputSchemas.get_node.shape,
-    async ({ nodeId, depth, fields, fileKey }): Promise<ToolResult> => {
-      const params: Record<string, unknown> = {};
-      params.depth = depth ?? 0;
-      return renderResponse(
-        () => node.sendWithParams("get_node", [nodeId], params, fileKey),
-        (data) => projectFields(data, fields)
+    "trace_prototype_flow",
+    "Read-only. Follow prototype navigation breadth-first from a screen: returns the screens reached (with depth and the node that reached them) and every interaction edge with its source node, trigger, action, enclosing conditional branches, and destination screen. Screens reached again are marked as revisits; unresolvable destinations are listed. Not available in FigJam. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.trace_prototype_flow.shape,
+    async ({ nodeId, fileKey, ...params }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("trace_prototype_flow", [nodeId], params, fileKey)
       );
     }
   );
@@ -195,18 +231,16 @@ export function registerTools(
 
   server.tool(
     "get_metadata",
-    "Get metadata about the current Figma document including file name, pages, and current page info. When multiple files are connected, specify fileKey.",
+    "Get metadata about the current Figma/FigJam document including file name, pages, and current page info. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_metadata.shape,
     async ({ fileKey }): Promise<ToolResult> => {
-      return renderResponse(() =>
-        node.send("get_metadata", undefined, fileKey)
-      );
+      return renderResponse(() => node.send("get_metadata", undefined, fileKey));
     }
   );
 
   server.tool(
     "get_design_context",
-    "START HERE when the user says they selected something in Figma. Returns the current selection if there is one, otherwise the current page, serialized to `depth` levels (default 2) with deeper nodes as {id,name,type} stubs plus a childCount, alongside the file name and page. Use the ids it returns with get_node (add `fields` to project only what you need) or find_nodes to drill in. Keep depth at 2-3; higher depths on a large frame will not fit in context. When multiple files are connected, specify fileKey.",
+    "START HERE when the user says they selected something in Figma. Returns the current selection if there is one, otherwise the current page, serialized to `depth` levels (default 2) with deeper nodes as {id,name,type} stubs plus a childCount, alongside the file name and page. Use the ids it returns with get_node (add `fields` to project only what you need) or find_nodes to drill in. Keep depth at 2-3; higher depths on a large frame will not fit in context. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_design_context.shape,
     async ({ depth, fileKey }): Promise<ToolResult> => {
       const params: Record<string, unknown> = {};
@@ -224,15 +258,13 @@ export function registerTools(
     "Get all local variable definitions including variable collections, modes, and variable values. Variables are Figma's system for design tokens (colors, numbers, strings, booleans). When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_variable_defs.shape,
     async ({ fileKey }): Promise<ToolResult> => {
-      return renderResponse(() =>
-        node.send("get_variable_defs", undefined, fileKey)
-      );
+      return renderResponse(() => node.send("get_variable_defs", undefined, fileKey));
     }
   );
 
   server.tool(
     "get_screenshot",
-    "Export a screenshot of the selected nodes or specific nodes by ID. By default writes each export to a temp file and returns only metadata (path, width, height) so the agent context stays lean. Pass `outputPath` to write to a specific path (single-node only — use save_screenshots for batches). Pass `inline: true` to return base64 in the response instead. When multiple files are connected, specify fileKey.",
+    "Export a screenshot of the selected nodes or specific nodes by ID. By default writes each export to a temp file and returns only metadata (path, width, height) so the agent context stays lean. Pass `outputPath` to write to a specific path (single-node only — use save_screenshots for batches). Pass `inline: true` to return base64 in the response instead. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_screenshot.shape,
     async ({
       nodeIds,
@@ -573,19 +605,14 @@ export function registerTools(
     toolInputSchemas.set_node_visibility.shape,
     async ({ items, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
-        node.sendWithParams(
-          "set_node_visibility",
-          undefined,
-          { items },
-          fileKey
-        )
+        node.sendWithParams("set_node_visibility", undefined, { items }, fileKey)
       );
     }
   );
 
   server.tool(
     "set_text_content",
-    "Update the contents of a single text node. The plugin loads the node's fonts before applying the new text. Accepts either text or characters. When multiple files are connected, specify fileKey.",
+    "Update the contents of a text node. Works on TEXT nodes plus FigJam STICKY and SHAPE_WITH_TEXT nodes (their text sublayer). The plugin loads the node's fonts before applying the new text. Accepts either text or characters. When multiple files are connected, specify fileKey.",
     setTextContentShape.shape,
     async (args): Promise<ToolResult> => {
       const parsed = parseToolInput(toolInputSchemas.set_text_content, args);
@@ -599,38 +626,29 @@ export function registerTools(
 
   server.tool(
     "set_text_properties",
-    "Patch common text properties such as font family/style, size, alignment, auto-resize, line height, letter spacing, fill color, and bounds. When multiple files are connected, specify fileKey.",
+    "Patch common text properties such as font family/style, size, line height, letter spacing, and fill color, plus alignment, auto-resize, and bounds on TEXT nodes. Also targets FigJam STICKY and SHAPE_WITH_TEXT text sublayers (alignment/auto-resize are TEXT-only). When multiple files are connected, specify fileKey.",
     setTextPropertiesShape.shape,
     async (args): Promise<ToolResult> => {
       const parsed = parseToolInput(setTextPropertiesInput, args);
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...properties } = parsed.data;
       return renderResponse(() =>
-        node.sendWithParams(
-          "set_text_properties",
-          [nodeId],
-          properties,
-          fileKey
-        )
+        node.sendWithParams("set_text_properties", [nodeId], properties, fileKey)
       );
     }
   );
 
   server.tool(
     "set_node_properties",
-    "Patch common node properties such as name, position, size, visibility, opacity, and corner radius. Only supported properties for the target node type may be changed. Use set_solid_fill or set_gradient_fill to change paints. When multiple files are connected, specify fileKey.",
-    setNodePropertiesInput.shape,
+    "Patch common node properties such as name, position, size, visibility, opacity, and corner radius. Accepts either a single nodeId or a nodeIds array to apply the same changes to multiple nodes in one call. Only supported properties for the target node type may be changed. Use set_solid_fill or set_gradient_fill to change paints. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
+    setNodePropertiesShape.shape,
     async (args): Promise<ToolResult> => {
       const parsed = parseToolInput(toolInputSchemas.set_node_properties, args);
       if (!parsed.success) return parsed.error;
-      const { nodeId, fileKey, ...properties } = parsed.data;
+      const { nodeId, nodeIds, fileKey, ...properties } = parsed.data;
+      const ids = nodeIds ?? (nodeId !== undefined ? [nodeId] : []);
       return renderResponse(() =>
-        node.sendWithParams(
-          "set_node_properties",
-          [nodeId],
-          properties,
-          fileKey
-        )
+        node.sendWithParams("set_node_properties", ids, properties, fileKey)
       );
     }
   );
@@ -643,9 +661,7 @@ export function registerTools(
       const parsed = parseToolInput(setSolidFillInput, args);
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...params } = parsed.data;
-      return renderResponse(() =>
-        node.sendWithParams("set_solid_fill", [nodeId], params, fileKey)
-      );
+      return renderResponse(() => node.sendWithParams("set_solid_fill", [nodeId], params, fileKey));
     }
   );
 
@@ -668,9 +684,7 @@ export function registerTools(
       const parsed = parseToolInput(setEffectsInput, args);
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...params } = parsed.data;
-      return renderResponse(() =>
-        node.sendWithParams("set_effects", [nodeId], params, fileKey)
-      );
+      return renderResponse(() => node.sendWithParams("set_effects", [nodeId], params, fileKey));
     }
   );
 
@@ -679,10 +693,7 @@ export function registerTools(
     "Patch stroke geometry properties: weight, align, dash pattern, cap, join. Use set_solid_fill/set_gradient_fill with target='stroke' to set the paint itself.",
     setStrokePropertiesInput.shape,
     async (args): Promise<ToolResult> => {
-      const parsed = parseToolInput(
-        toolInputSchemas.set_stroke_properties,
-        args
-      );
+      const parsed = parseToolInput(toolInputSchemas.set_stroke_properties, args);
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...params } = parsed.data;
       return renderResponse(() =>
@@ -693,7 +704,7 @@ export function registerTools(
 
   server.tool(
     "set_auto_layout",
-    "Configure auto-layout on a frame: direction, gap, padding, alignment, sizing modes, wrap. Set layoutMode='NONE' to disable auto-layout on the frame.",
+    "Configure auto-layout on a frame: direction, gap, padding, alignment, sizing modes, wrap. Set layoutMode='NONE' to disable auto-layout on the frame. Not supported on SECTION nodes (Figma's API has no section auto-layout).",
     setAutoLayoutInput.shape,
     async (args): Promise<ToolResult> => {
       const parsed = parseToolInput(toolInputSchemas.set_auto_layout, args);
@@ -706,6 +717,18 @@ export function registerTools(
   );
 
   server.tool(
+    "create_page",
+    "Create a new page in the Figma document, optionally naming it and switching the editor to it. Returns the new page's ID, which can be passed as parentId to create_frame / create_text / create_shape / create_image to author content on that page. When multiple files are connected, specify fileKey.",
+    createPageInput.shape,
+    async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(toolInputSchemas.create_page, args);
+      if (!parsed.success) return parsed.error;
+      const { fileKey, ...params } = parsed.data;
+      return renderResponse(() => node.sendWithParams("create_page", undefined, params, fileKey));
+    }
+  );
+
+  server.tool(
     "create_frame",
     "Create a new frame, optionally inside a specified parent. You can set name, size, position, and a solid fill. When multiple files are connected, specify fileKey.",
     createFrameInput.shape,
@@ -713,57 +736,71 @@ export function registerTools(
       const parsed = parseToolInput(toolInputSchemas.create_frame, args);
       if (!parsed.success) return parsed.error;
       const { fileKey, ...params } = parsed.data;
+      return renderResponse(() => node.sendWithParams("create_frame", undefined, params, fileKey));
+    }
+  );
+
+  server.tool(
+    "create_section",
+    "Create a new section — a named container with its own background, resizable independently of its contents. Works in Figma and FigJam. When multiple files are connected, specify fileKey.",
+    createSectionShape.shape,
+    async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(toolInputSchemas.create_section, args);
+      if (!parsed.success) return parsed.error;
+      const { fileKey, ...params } = parsed.data;
       return renderResponse(() =>
-        node.sendWithParams("create_frame", undefined, params, fileKey)
+        node.sendWithParams("create_section", undefined, params, fileKey)
       );
     }
   );
 
   server.tool(
     "create_text",
-    "Create a new text node, optionally inside a specified parent. You can set its content, font, size, alignment, color, position, and bounds. When multiple files are connected, specify fileKey.",
+    "Create a new text node, optionally inside a specified parent. You can set its content, font, size, alignment, color, position, and bounds. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
     createTextShape.shape,
     async (args): Promise<ToolResult> => {
       const parsed = parseToolInput(createTextInput, args);
       if (!parsed.success) return parsed.error;
       const { fileKey, ...params } = parsed.data;
-      return renderResponse(() =>
-        node.sendWithParams("create_text", undefined, params, fileKey)
-      );
+      return renderResponse(() => node.sendWithParams("create_text", undefined, params, fileKey));
     }
   );
 
   server.tool(
     "create_shape",
-    "Create a rectangle, ellipse, or line, optionally inside a specified parent. You can set its size, position, rotation, fill, and stroke. When multiple files are connected, specify fileKey.",
+    "Create a rectangle, ellipse, or line, optionally inside a specified parent. You can set its size, position, rotation, fill, and stroke. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
     createShapeShape.shape,
     async (args): Promise<ToolResult> => {
       const parsed = parseToolInput(createShapeInput, args);
       if (!parsed.success) return parsed.error;
       const { fileKey, ...params } = parsed.data;
+      return renderResponse(() => node.sendWithParams("create_shape", undefined, params, fileKey));
+    }
+  );
+
+  server.tool(
+    "create_shape_with_text",
+    "Create a FigJam shape that carries its own text label (SHAPE_WITH_TEXT), e.g. ROUNDED_RECTANGLE, DIAMOND, or ENG_DATABASE. You can set its shape type, text (and text fill via textFillHex), fill, stroke, position, and size. Only available in FigJam. When multiple files are connected, specify fileKey.",
+    createShapeWithTextShape.shape,
+    async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(createShapeWithTextInput, args);
+      if (!parsed.success) return parsed.error;
+      const { fileKey, ...params } = parsed.data;
       return renderResponse(() =>
-        node.sendWithParams("create_shape", undefined, params, fileKey)
+        node.sendWithParams("create_shape_with_text", undefined, params, fileKey)
       );
     }
   );
 
   server.tool(
     "create_image",
-    "Create an image-backed rectangle from a local file path, remote URL, or data URI. You can set its parent, position, size, corner radius, and fit mode. When multiple files are connected, specify fileKey.",
+    "Create an image-backed rectangle from a local file path, remote URL, or data URI. You can set its parent, position, size, corner radius, and fit mode. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
     createImageInput.shape,
     async ({ source, fileKey, ...params }): Promise<ToolResult> => {
       try {
-        const imageBase64 = await loadImageSourceAsBase64(
-          source,
-          process.cwd()
-        );
+        const imageBase64 = await loadImageSourceAsBase64(source, process.cwd());
         return await renderResponse(() =>
-          node.sendWithParams(
-            "create_image",
-            undefined,
-            { ...params, imageBase64 },
-            fileKey
-          )
+          node.sendWithParams("create_image", undefined, { ...params, imageBase64 }, fileKey)
         );
       } catch (err) {
         return {
@@ -780,8 +817,82 @@ export function registerTools(
   );
 
   server.tool(
+    "create_svg",
+    "Insert raw SVG markup or a workspace-local SVG file as editable Figma vector layers using figma.createNodeFromSvg. You can set its parent, position, size, and semantic name. When multiple files are connected, specify fileKey.",
+    createSvgInput.shape,
+    async ({ source, fileKey, ...params }): Promise<ToolResult> => {
+      try {
+        const svgText = await loadSvgSource(source, process.cwd());
+        return await renderResponse(() =>
+          node.sendWithParams("create_svg", undefined, { ...params, svgText }, fileKey)
+        );
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "import_html_layers",
+    "Import a DOM serialization (JSON produced by html-figma's browser htmlToFigma()) as editable Figma layers inside a new wrapper frame — frames, text, rectangles, and SVG vectors in one call. Source must be a JSON file path inside the MCP server working directory. Optionally append the wrapper into an existing frame/section via parentId. Requires the plugin to be open in the design editor. When multiple files are connected, specify fileKey.",
+    importHtmlLayersInput.shape,
+    async ({ source, fileKey, ...params }): Promise<ToolResult> => {
+      try {
+        const layers = await loadLayersJson(source, process.cwd());
+        return await renderResponse(() =>
+          node.sendWithParams("import_html_layers", undefined, { ...params, layers }, fileKey)
+        );
+      } catch (err) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.tool(
+    "create_sticky",
+    "Create a new sticky note in FigJam. You can set its text content, position, and whether it uses the wide shape (isWideWidth). Only available in FigJam. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.create_sticky.shape,
+    async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(toolInputSchemas.create_sticky, args);
+      if (!parsed.success) return parsed.error;
+      const { fileKey, ...params } = parsed.data;
+      return renderResponse(() => node.sendWithParams("create_sticky", undefined, params, fileKey));
+    }
+  );
+
+  server.tool(
+    "create_connector",
+    "Create a connector between two nodes in FigJam. You can specify start/end node IDs or absolute positions, plus the attachment side on each node (startAnchor/endAnchor: top, bottom, left, right, auto). Only available in FigJam. When multiple files are connected, specify fileKey.",
+    createConnectorBase.shape,
+    async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(toolInputSchemas.create_connector, args);
+      if (!parsed.success) return parsed.error;
+      const { fileKey, ...params } = parsed.data;
+      return renderResponse(() =>
+        node.sendWithParams("create_connector", undefined, params, fileKey)
+      );
+    }
+  );
+
+  server.tool(
     "duplicate_nodes",
-    "Duplicate one or more nodes in place. The duplicates remain under the same parent as the originals. When multiple files are connected, specify fileKey.",
+    "Duplicate one or more nodes in place. The duplicates remain under the same parent as the originals. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
     toolInputSchemas.duplicate_nodes.shape,
     async ({ nodeIds, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
@@ -791,8 +902,85 @@ export function registerTools(
   );
 
   server.tool(
+    "duplicate_with_offset",
+    "Duplicate nodes and move each duplicate by a fixed offset in one call. Returns the mapping from source node IDs to duplicate node IDs. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
+    duplicateWithOffsetInput.shape,
+    async ({ nodeIds, offsetX, offsetY, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("duplicate_with_offset", nodeIds, { offsetX, offsetY }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "fit_to_content",
+    "Resize a SECTION so it tightly wraps its children with optional padding: children are shifted so their bounding box starts at the padding, then the section is resized to bbox + 2×padding. SECTION nodes only — Figma's API has no equivalent for other containers. Works in Figma and FigJam. When multiple files are connected, specify fileKey.",
+    fitToContentInput.shape,
+    async ({ nodeId, padding, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("fit_to_content", [nodeId], { padding }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "distribute_horizontally",
+    "Space three or more nodes with equal horizontal gaps, keeping the leftmost and rightmost nodes fixed. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
+    distributeInput.shape,
+    async ({ nodeIds, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("distribute_horizontally", nodeIds, undefined, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "distribute_vertically",
+    "Space three or more nodes with equal vertical gaps, keeping the topmost and bottommost nodes fixed. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
+    distributeInput.shape,
+    async ({ nodeIds, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("distribute_vertically", nodeIds, undefined, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "align_to_grid",
+    "Snap each node's x/y position to a grid of the given size. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
+    alignToGridInput.shape,
+    async ({ nodeIds, gridSize, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("align_to_grid", nodeIds, { gridSize }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "place_below",
+    "Move a node directly below a reference node with an optional gap and start/center alignment across the reference's width. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
+    placeBelowInput.shape,
+    async ({ nodeId, relativeToId, gap, align, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("place_below", [nodeId], { relativeToId, gap, align }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
+    "place_right_of",
+    "Move a node directly to the right of a reference node with an optional gap and start/center alignment across the reference's height. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
+    placeRightOfInput.shape,
+    async ({ nodeId, relativeToId, gap, align, fileKey }): Promise<ToolResult> => {
+      return renderResponse(() =>
+        node.sendWithParams("place_right_of", [nodeId], { relativeToId, gap, align }, fileKey)
+      );
+    }
+  );
+
+  server.tool(
     "reparent_nodes",
-    "Move one or more nodes into a different parent container. When multiple files are connected, specify fileKey.",
+    "Move one or more nodes into a different parent container. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
     toolInputSchemas.reparent_nodes.shape,
     async ({ nodeIds, parentId, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
@@ -806,9 +994,7 @@ export function registerTools(
     "Wrap a list of nodes in a new group. Nodes must share a common parent (or supply parentId explicitly). Returns the new group's node ID.",
     groupNodesInput.shape,
     async ({ nodeIds, fileKey, ...params }): Promise<ToolResult> => {
-      return renderResponse(() =>
-        node.sendWithParams("group_nodes", nodeIds, params, fileKey)
-      );
+      return renderResponse(() => node.sendWithParams("group_nodes", nodeIds, params, fileKey));
     }
   );
 
@@ -825,7 +1011,7 @@ export function registerTools(
 
   server.tool(
     "set_selection",
-    "Set the current page selection to a list of node IDs. Pass an empty array to clear the selection. Works in both design editor and Dev Mode.",
+    "Set the current page selection to a list of node IDs. Pass an empty array to clear the selection. Works in Figma design editor, Dev Mode, and FigJam.",
     setSelectionInput.shape,
     async ({ nodeIds, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
@@ -836,23 +1022,18 @@ export function registerTools(
 
   server.tool(
     "scroll_and_zoom_into_view",
-    "Scroll and zoom the Figma viewport so the given nodes are framed in view. Works in both design editor and Dev Mode.",
+    "Scroll and zoom the Figma/FigJam viewport so the given nodes are framed in view. Works in Figma design editor, Dev Mode, and FigJam.",
     scrollAndZoomIntoViewInput.shape,
     async ({ nodeIds, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
-        node.sendWithParams(
-          "scroll_and_zoom_into_view",
-          nodeIds,
-          undefined,
-          fileKey
-        )
+        node.sendWithParams("scroll_and_zoom_into_view", nodeIds, undefined, fileKey)
       );
     }
   );
 
   server.tool(
     "delete_nodes",
-    "Delete one or more nodes. This is destructive and requires confirm: true. Page and document nodes cannot be deleted through this tool. When multiple files are connected, specify fileKey.",
+    "Delete one or more nodes. This is destructive and requires confirm: true. Page and document nodes cannot be deleted through this tool. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
     toolInputSchemas.delete_nodes.shape,
     async ({ nodeIds, confirm, fileKey }): Promise<ToolResult> => {
       return renderResponse(() =>
@@ -866,9 +1047,7 @@ export function registerTools(
     "List all available animation presets in Figma (Motion API beta). When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_motion_styles.shape,
     async ({ fileKey }): Promise<ToolResult> => {
-      return renderResponse(() =>
-        node.send("get_motion_styles", undefined, fileKey)
-      );
+      return renderResponse(() => node.send("get_motion_styles", undefined, fileKey));
     }
   );
 
@@ -877,9 +1056,7 @@ export function registerTools(
     "Read a node's current animationStyles, animations, manualKeyframeTracks, and timelines (Motion API beta). When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_node_motion.shape,
     async ({ nodeId, fileKey }): Promise<ToolResult> => {
-      return renderResponse(() =>
-        node.send("get_node_motion", [nodeId], fileKey)
-      );
+      return renderResponse(() => node.send("get_node_motion", [nodeId], fileKey));
     }
   );
 
@@ -892,12 +1069,7 @@ export function registerTools(
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...properties } = parsed.data;
       return renderResponse(() =>
-        node.sendWithParams(
-          "apply_animation_style",
-          [nodeId],
-          properties,
-          fileKey
-        )
+        node.sendWithParams("apply_animation_style", [nodeId], properties, fileKey)
       );
     }
   );
@@ -911,12 +1083,7 @@ export function registerTools(
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...properties } = parsed.data;
       return renderResponse(() =>
-        node.sendWithParams(
-          "remove_animation_style",
-          [nodeId],
-          properties,
-          fileKey
-        )
+        node.sendWithParams("remove_animation_style", [nodeId], properties, fileKey)
       );
     }
   );
@@ -930,12 +1097,7 @@ export function registerTools(
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...properties } = parsed.data;
       return renderResponse(() =>
-        node.sendWithParams(
-          "apply_manual_keyframe_track",
-          [nodeId],
-          properties,
-          fileKey
-        )
+        node.sendWithParams("apply_manual_keyframe_track", [nodeId], properties, fileKey)
       );
     }
   );
@@ -949,12 +1111,7 @@ export function registerTools(
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...properties } = parsed.data;
       return renderResponse(() =>
-        node.sendWithParams(
-          "remove_manual_keyframe_track",
-          [nodeId],
-          properties,
-          fileKey
-        )
+        node.sendWithParams("remove_manual_keyframe_track", [nodeId], properties, fileKey)
       );
     }
   );
@@ -968,12 +1125,7 @@ export function registerTools(
       if (!parsed.success) return parsed.error;
       const { nodeId, fileKey, ...properties } = parsed.data;
       return renderResponse(() =>
-        node.sendWithParams(
-          "set_timeline_duration",
-          [nodeId],
-          properties,
-          fileKey
-        )
+        node.sendWithParams("set_timeline_duration", [nodeId], properties, fileKey)
       );
     }
   );
@@ -989,13 +1141,7 @@ export function registerTools(
           sendWithParams: (requestType, nodeIds, params) =>
             node.sendWithParams(requestType, nodeIds, params, fileKey),
         };
-        const result = await executeSaveScreenshots(
-          sender,
-          items,
-          format,
-          scale,
-          clip
-        );
+        const result = await executeSaveScreenshots(sender, items, format, scale, clip);
         return {
           content: [{ type: "text", text: JSON.stringify(result) }],
         };
@@ -1152,8 +1298,7 @@ function resolveAndValidateOutputPath(
   const resolvedRoot = resolveOutputRoot(workspaceRoot);
   const resolvedPath = path.resolve(resolvedRoot, outputPath);
   const relativePath = path.relative(resolvedRoot, resolvedPath);
-  const escapesRoot =
-    relativePath.startsWith("..") || path.isAbsolute(relativePath);
+  const escapesRoot = relativePath.startsWith("..") || path.isAbsolute(relativePath);
   if (escapesRoot) {
     throw new Error(
       `outputPath must be inside ${resolvedRoot}. That root is the MCP server's working directory, which belongs to whichever client started the bridge — set FIGMA_BRIDGE_OUTPUT_ROOT on the server to point somewhere else, or write inside that directory and move the file afterwards.`
@@ -1162,16 +1307,193 @@ function resolveAndValidateOutputPath(
   return resolvedPath;
 }
 
+const SVG_PROLOG_TOKENS: ReadonlyArray<readonly [open: string, close: string]> = [
+  ["<?xml", "?>"],
+  ["<!--", "-->"],
+  ["<!DOCTYPE", ">"],
+];
+
+function stripLeadingBomAndWhitespace(source: string): string {
+  return source.replace(/^\uFEFF/, "").trimStart();
+}
+
+/** File paths never start with `<`, so anything that does is treated as inline markup. */
+function isInlineMarkup(source: string): boolean {
+  return stripLeadingBomAndWhitespace(source).startsWith("<");
+}
+
+/**
+ * Checks whether text has an `<svg>` root after the XML prolog vector editors
+ * emit: an optional BOM, XML declaration, comments, and DOCTYPE. This is a
+ * cheap pre-check for a clear error; Figma performs the full parse.
+ */
+function hasSvgRoot(source: string): boolean {
+  let rest = stripLeadingBomAndWhitespace(source);
+  for (;;) {
+    const token = SVG_PROLOG_TOKENS.find(([open]) => rest.startsWith(open));
+    if (!token) break;
+    const [open, close] = token;
+    const end = rest.indexOf(close, open.length);
+    if (end === -1) return false;
+    rest = rest.slice(end + close.length).trimStart();
+  }
+  return /^<svg[\s/>]/.test(rest);
+}
+
+/** Returns true when candidate is the root itself or a descendant of it. */
+function isPathInside(candidate: string, root: string): boolean {
+  const relativePath = path.relative(root, candidate);
+  return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+}
+
+/**
+ * Compares filesystem identities rather than path strings. Node exposes the
+ * device and inode/file-index values through Stats on both POSIX and Windows.
+ */
+function isSameFile(opened: Stats, current: Stats): boolean {
+  return opened.dev === current.dev && opened.ino === current.ino;
+}
+
+/**
+ * Resolves inline SVG markup or reads a workspace-contained SVG file and
+ * validates its size and document root before forwarding it to Figma.
+ */
+async function loadSvgSource(source: string, workspaceRoot: string): Promise<string> {
+  let svgText: string;
+
+  if (isInlineMarkup(source)) {
+    svgText = source;
+  } else {
+    const resolvedRoot = await realpath(path.resolve(workspaceRoot));
+    const lexicalPath = path.resolve(resolvedRoot, source);
+    if (!isPathInside(lexicalPath, resolvedRoot)) {
+      throw new Error(
+        "SVG source must be inside the MCP server working directory: " + resolvedRoot
+      );
+    }
+
+    let resolvedPath: string;
+    try {
+      resolvedPath = await realpath(lexicalPath);
+    } catch {
+      throw new Error("SVG source not found: " + source);
+    }
+
+    if (!isPathInside(resolvedPath, resolvedRoot)) {
+      throw new Error(
+        "SVG source must be inside the MCP server working directory: " + resolvedRoot
+      );
+    }
+
+    // Read and validate through one descriptor. Re-resolving the caller's path
+    // after open and comparing file identities detects a symlink or directory
+    // swap between the containment check and open without relying on
+    // platform-specific openat/openat2 bindings that Node does not expose.
+    const file = await open(resolvedPath, "r");
+    try {
+      const openedInfo = await file.stat();
+      if (!openedInfo.isFile()) {
+        throw new Error("SVG source is not a regular file: " + source);
+      }
+      if (openedInfo.size > MAX_SVG_BYTES) {
+        throw new Error("SVG source exceeds the " + MAX_SVG_BYTES + " byte bridge limit");
+      }
+
+      let currentPath: string;
+      try {
+        currentPath = await realpath(lexicalPath);
+      } catch {
+        throw new Error("SVG source changed while it was being opened: " + source);
+      }
+      if (!isPathInside(currentPath, resolvedRoot)) {
+        throw new Error(
+          "SVG source must be inside the MCP server working directory: " + resolvedRoot
+        );
+      }
+
+      const currentInfo = await stat(currentPath);
+      if (!isSameFile(openedInfo, currentInfo)) {
+        throw new Error("SVG source changed while it was being opened: " + source);
+      }
+
+      svgText = await file.readFile({ encoding: "utf8" });
+    } finally {
+      await file.close();
+    }
+  }
+
+  if (Buffer.byteLength(svgText, "utf8") > MAX_SVG_BYTES) {
+    throw new Error("SVG source exceeds the " + MAX_SVG_BYTES + " byte bridge limit");
+  }
+  if (!hasSvgRoot(svgText)) {
+    throw new Error("SVG source must begin with an <svg> element");
+  }
+  return svgText;
+}
+
 /**
  * Loads an image source as a base64 string from a URL, data URI, or local file.
  * @param source - Image source: URL, data URI, or local file path.
  * @param workspaceRoot - Root directory for resolving relative local paths.
  * @returns Base64-encoded image bytes.
  */
-async function loadImageSourceAsBase64(
+const MAX_LAYERS_JSON_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Reads and parses an html-figma layer-tree JSON file from inside the
+ * workspace root. Mirrors the local-path rules of loadImageSourceAsBase64.
+ * @param source - JSON file path (absolute or relative to the workspace root).
+ * @param workspaceRoot - The MCP server working directory.
+ * @returns The parsed layer tree (root LayerNode).
+ */
+async function loadLayersJson(
   source: string,
   workspaceRoot: string
-): Promise<string> {
+): Promise<Record<string, unknown>> {
+  const resolvedRoot = await realpath(path.resolve(workspaceRoot));
+  const lexicalPath = path.resolve(resolvedRoot, source);
+  // Resolve symlinks before the containment check — a workspace-local symlink
+  // must not be able to point the read outside the working directory.
+  let resolvedPath: string;
+  try {
+    resolvedPath = await realpath(lexicalPath);
+  } catch {
+    throw new Error(`Layers source not found: ${source}`);
+  }
+  const relativePath = path.relative(resolvedRoot, resolvedPath);
+  const escapesRoot = relativePath.startsWith("..") || path.isAbsolute(relativePath);
+  if (escapesRoot) {
+    throw new Error(
+      `layers source must be inside the MCP server working directory: ${resolvedRoot}`
+    );
+  }
+  // Check the size before reading so an oversized file is rejected without
+  // allocating its contents.
+  const info = await stat(resolvedPath);
+  if (!info.isFile()) {
+    throw new Error(`Layers source is not a regular file: ${source}`);
+  }
+  if (info.size > MAX_LAYERS_JSON_BYTES) {
+    throw new Error(`Layers JSON exceeds ${MAX_LAYERS_JSON_BYTES} bytes`);
+  }
+  const bytes = await readFile(resolvedPath);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new Error(`Layers source is not valid JSON: ${source}`);
+  }
+  // htmlToFigma() returns a single root LayerNode; tolerate a one-element array.
+  const root = Array.isArray(parsed) ? parsed[0] : parsed;
+  if (!root || typeof root !== "object" || typeof (root as { type?: unknown }).type !== "string") {
+    throw new Error(
+      "Layers JSON must be an html-figma LayerNode tree (object with a `type` field)"
+    );
+  }
+  return root as Record<string, unknown>;
+}
+
+async function loadImageSourceAsBase64(source: string, workspaceRoot: string): Promise<string> {
   if (/^https?:\/\//i.test(source)) {
     const bytes = await fetchImageBytes(source);
     return bytes.toString("base64");
@@ -1185,8 +1507,7 @@ async function loadImageSourceAsBase64(
   const resolvedRoot = resolveOutputRoot(workspaceRoot);
   const resolvedPath = path.resolve(resolvedRoot, source);
   const relativePath = path.relative(resolvedRoot, resolvedPath);
-  const escapesRoot =
-    relativePath.startsWith("..") || path.isAbsolute(relativePath);
+  const escapesRoot = relativePath.startsWith("..") || path.isAbsolute(relativePath);
   if (escapesRoot) {
     throw new Error(
       `image source must be inside ${resolvedRoot} (resolved from "${source}"). That root is the MCP server's working directory — set FIGMA_BRIDGE_OUTPUT_ROOT to change it, or pass a path inside it.`
@@ -1212,10 +1533,7 @@ async function fetchImageBytes(source: string): Promise<Buffer> {
     await assertSafeHttpUrl(url);
 
     const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      IMAGE_FETCH_TIMEOUT_MS
-    );
+    const timeout = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
     let resp: Response;
     try {
       resp = await fetch(url, {
@@ -1224,9 +1542,7 @@ async function fetchImageBytes(source: string): Promise<Buffer> {
       });
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
-        throw new Error(
-          `Timed out fetching image after ${IMAGE_FETCH_TIMEOUT_MS}ms`
-        );
+        throw new Error(`Timed out fetching image after ${IMAGE_FETCH_TIMEOUT_MS}ms`);
       }
       throw err;
     } finally {
@@ -1236,24 +1552,18 @@ async function fetchImageBytes(source: string): Promise<Buffer> {
     if (resp.status >= 300 && resp.status < 400) {
       const location = resp.headers.get("location");
       if (!location) {
-        throw new Error(
-          `Image redirect missing Location header: ${resp.status}`
-        );
+        throw new Error(`Image redirect missing Location header: ${resp.status}`);
       }
       redirects += 1;
       if (redirects > MAX_IMAGE_REDIRECTS) {
-        throw new Error(
-          `Image fetch exceeded ${MAX_IMAGE_REDIRECTS} redirects`
-        );
+        throw new Error(`Image fetch exceeded ${MAX_IMAGE_REDIRECTS} redirects`);
       }
       url = new URL(location, url);
       continue;
     }
 
     if (!resp.ok) {
-      throw new Error(
-        `Failed to fetch image: ${resp.status} ${resp.statusText}`
-      );
+      throw new Error(`Failed to fetch image: ${resp.status} ${resp.statusText}`);
     }
 
     const contentLength = resp.headers.get("content-length");
@@ -1354,10 +1664,7 @@ function normalizeHostname(hostname: string): string {
  * @param maxBytes - Maximum number of bytes to accept.
  * @returns Concatenated response bytes.
  */
-async function readBoundedResponse(
-  resp: Response,
-  maxBytes: number
-): Promise<Buffer> {
+async function readBoundedResponse(resp: Response, maxBytes: number): Promise<Buffer> {
   if (!resp.body) {
     return Buffer.alloc(0);
   }
@@ -1410,9 +1717,7 @@ function resolveExportFormat(
   inferredFormat: ExportFormat | null
 ): ExportFormat {
   if (format && inferredFormat && format !== inferredFormat) {
-    throw new Error(
-      `format ${format} conflicts with outputPath extension (${inferredFormat})`
-    );
+    throw new Error(`format ${format} conflicts with outputPath extension (${inferredFormat})`);
   }
   return format ?? inferredFormat ?? "PNG";
 }
@@ -1544,15 +1849,9 @@ async function saveScreenshotItemToFile(
   let resolvedOutputPath = item.outputPath;
 
   try {
-    resolvedOutputPath = resolveAndValidateOutputPath(
-      item.outputPath,
-      workspaceRoot
-    );
+    resolvedOutputPath = resolveAndValidateOutputPath(item.outputPath, workspaceRoot);
     const inferredFormat = inferFormatFromPath(resolvedOutputPath);
-    const resolvedFormat = resolveExportFormat(
-      item.format ?? defaultFormat,
-      inferredFormat
-    );
+    const resolvedFormat = resolveExportFormat(item.format ?? defaultFormat, inferredFormat);
     const resolvedScale = resolveScale(item.scale, defaultScale);
     const resolvedClip = item.clip ?? defaultClip;
 
@@ -1566,11 +1865,7 @@ async function saveScreenshotItemToFile(
       params.clip = resolvedClip;
     }
 
-    const resp = await sender.sendWithParams(
-      "get_screenshot",
-      [item.nodeId],
-      params
-    );
+    const resp = await sender.sendWithParams("get_screenshot", [item.nodeId], params);
     if (resp.error) {
       throw new Error(resp.error);
     }
@@ -1687,10 +1982,7 @@ async function writeExportToFile(
  * @param outputPath - Destination file path.
  * @returns Number of bytes written.
  */
-async function writeBase64ToFile(
-  base64: string,
-  outputPath: string
-): Promise<number> {
+async function writeBase64ToFile(base64: string, outputPath: string): Promise<number> {
   const bytes = Buffer.from(base64, "base64");
   await mkdir(path.dirname(outputPath), { recursive: true });
   try {
@@ -1710,10 +2002,7 @@ async function writeBase64ToFile(
  * @param defaultScale - Default scale for the batch.
  * @returns Positive scale value, or undefined if not applicable.
  */
-function resolveScale(
-  itemScale?: number,
-  defaultScale?: number
-): number | undefined {
+function resolveScale(itemScale?: number, defaultScale?: number): number | undefined {
   const resolvedScale = itemScale ?? defaultScale;
   if (resolvedScale === undefined || resolvedScale <= 0) {
     return undefined;

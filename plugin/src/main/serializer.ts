@@ -6,11 +6,7 @@ type SerializedSolidPaint = {
 };
 
 type SerializedGradientPaint = {
-  type:
-    | "GRADIENT_LINEAR"
-    | "GRADIENT_RADIAL"
-    | "GRADIENT_ANGULAR"
-    | "GRADIENT_DIAMOND";
+  type: "GRADIENT_LINEAR" | "GRADIENT_RADIAL" | "GRADIENT_ANGULAR" | "GRADIENT_DIAMOND";
   gradientStops: { color: string; opacity: number; position: number }[];
   gradientTransform: Transform;
   opacity?: number;
@@ -24,10 +20,7 @@ type SerializedImagePaint = {
   opacity?: number;
 };
 
-type SerializedPaint =
-  | SerializedSolidPaint
-  | SerializedGradientPaint
-  | SerializedImagePaint;
+type SerializedPaint = SerializedSolidPaint | SerializedGradientPaint | SerializedImagePaint;
 
 // --- Serialized effect types ---
 type SerializedShadowEffect = {
@@ -107,8 +100,7 @@ type SerializedNode = {
 const isMixed = (value: unknown): value is symbol => typeof value === "symbol";
 
 const toHex = (color: RGB): string => {
-  const clamp = (value: number) =>
-    Math.min(255, Math.max(0, Math.round(value * 255)));
+  const clamp = (value: number) => Math.min(255, Math.max(0, Math.round(value * 255)));
   const [r, g, b] = [clamp(color.r), clamp(color.g), clamp(color.b)];
   return `#${[r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 };
@@ -207,7 +199,7 @@ const serializeLetterSpacing = (letterSpacing: LetterSpacing | symbol) => {
   return { value: letterSpacing.value, unit: letterSpacing.unit };
 };
 
-const getBounds = (node: SceneNode): SerializedBounds | undefined => {
+const getBounds = (node: SerializableNode): SerializedBounds | undefined => {
   if ("x" in node && "y" in node && "width" in node && "height" in node) {
     return {
       x: node.x,
@@ -238,23 +230,17 @@ const serializeText = (node: TextNode, base: SerializedNode) => {
       fontFamily,
       fontStyle,
       fontWeight: isMixed(node.fontWeight) ? "mixed" : node.fontWeight,
-      textDecoration: isMixed(node.textDecoration)
-        ? "mixed"
-        : node.textDecoration,
+      textDecoration: isMixed(node.textDecoration) ? "mixed" : node.textDecoration,
       lineHeight: serializeLineHeight(node.lineHeight),
       letterSpacing: serializeLetterSpacing(node.letterSpacing),
-      textAlignHorizontal: isMixed(node.textAlignHorizontal)
-        ? "mixed"
-        : node.textAlignHorizontal,
-      textAlignVertical: isMixed(node.textAlignVertical)
-        ? "mixed"
-        : node.textAlignVertical,
+      textAlignHorizontal: isMixed(node.textAlignHorizontal) ? "mixed" : node.textAlignHorizontal,
+      textAlignVertical: isMixed(node.textAlignVertical) ? "mixed" : node.textAlignVertical,
       textAutoResize: node.textAutoResize,
     },
   };
 };
 
-const serializeStyles = (node: SceneNode): SerializedStyles => {
+const serializeStyles = (node: SerializableNode): SerializedStyles => {
   const styles: SerializedStyles = {};
 
   if ("opacity" in node) {
@@ -274,9 +260,7 @@ const serializeStyles = (node: SceneNode): SerializedStyles => {
     styles.strokes = serializePaints(node.strokes);
   }
   if ("strokeWeight" in node) {
-    styles.strokeWeight = isMixed(node.strokeWeight)
-      ? "mixed"
-      : (node.strokeWeight as number);
+    styles.strokeWeight = isMixed(node.strokeWeight) ? "mixed" : (node.strokeWeight as number);
   }
   if ("strokeAlign" in node) {
     styles.strokeAlign = node.strokeAlign as string;
@@ -296,9 +280,7 @@ const serializeStyles = (node: SceneNode): SerializedStyles => {
   }
 
   if ("cornerRadius" in node) {
-    styles.cornerRadius = isMixed(node.cornerRadius)
-      ? "mixed"
-      : (node.cornerRadius as number);
+    styles.cornerRadius = isMixed(node.cornerRadius) ? "mixed" : (node.cornerRadius as number);
   }
   if ("topLeftRadius" in node) {
     const tl = node.topLeftRadius as number;
@@ -333,9 +315,7 @@ const serializeStyles = (node: SceneNode): SerializedStyles => {
         counterAxisSizing: (node as FrameNode).counterAxisSizingMode as string,
         wrap: "layoutWrap" in node ? (node.layoutWrap as string) : undefined,
         counterAxisSpacing:
-          "counterAxisSpacing" in node
-            ? (node.counterAxisSpacing as number)
-            : undefined,
+          "counterAxisSpacing" in node ? (node.counterAxisSpacing as number) : undefined,
       };
     }
   }
@@ -368,6 +348,13 @@ const serializeStyles = (node: SceneNode): SerializedStyles => {
 };
 
 /**
+ * `serializeNode` is also called with the current page (get_document,
+ * get_design_context), which shares the id/name/type/children surface it reads.
+ * Every property beyond that is read behind an `in` check.
+ */
+export type SerializableNode = SceneNode | PageNode;
+
+/**
  * Serializes a node, descending at most `depth` levels into its children.
  *
  * `depth` counts levels of *fully serialized* descendants: depth 0 returns the
@@ -385,7 +372,7 @@ const serializeStyles = (node: SceneNode): SerializedStyles => {
  * @returns The serialized node.
  */
 export const serializeNode = (
-  node: SceneNode,
+  node: SerializableNode,
   depth: number = Infinity
 ): SerializedNode => {
   const base: SerializedNode = {
@@ -396,8 +383,21 @@ export const serializeNode = (
     styles: serializeStyles(node),
   };
 
+  // Handle Figma TEXT nodes and FigJam STICKY / SHAPE_WITH_TEXT nodes (which
+  // expose their label through a `.text` sublayer).
   if (node.type === "TEXT") {
     return serializeText(node, base);
+  }
+  if ((node.type === "STICKY" || node.type === "SHAPE_WITH_TEXT") && "text" in node) {
+    try {
+      const textNode = node.text;
+      return {
+        ...base,
+        characters: textNode.characters,
+      };
+    } catch {
+      // text sub-node may not be accessible
+    }
   }
 
   if ("children" in node) {

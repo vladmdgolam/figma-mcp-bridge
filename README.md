@@ -18,6 +18,9 @@
 
 <br/>
 
+> [!NOTE]  
+> Requires the Figma desktop app (macOS/Windows). The browser version of Figma does not support importing development plugins.
+
 While other amazing Figma MCP servers like [Figma-Context-MCP](https://github.com/GLips/Figma-Context-MCP/) exist, one issues is the [API limiting](https://github.com/GLips/Figma-Context-MCP/issues/258) for free users.
 
 The limit for free accounts is 6 requests per month, yes **per month**.
@@ -33,7 +36,6 @@ It also includes a small, opt-in set of **write tools** for safe agent-driven ed
 [Watch a demo of building a UI in Cursor with Figma MCP Bridge](https://youtu.be/ouygIhFBx0g)
 
 [![Watch the video](https://img.youtube.com/vi/ouygIhFBx0g/maxresdefault.jpg)](https://youtu.be/ouygIhFBx0g)
-
 
 ## Quick Start
 
@@ -62,7 +64,7 @@ cd figma-mcp-bridge/plugin
 bun install && bun run build
 ```
 
-Then in Figma go to `Plugins > Development > Import plugin from manifest` and select `manifest.json` from the `plugin/` folder.
+Then in Figma go to `Plugins > Development > Import plugin from manifest` and select `manifest.json` from the `plugin/` folder. The same plugin runs in Figma design files, Dev Mode (read-only), and FigJam boards.
 
 ### 3. Start using it 🎉
 
@@ -101,6 +103,9 @@ The plugin UI is also de-branded and collapsed to a single line (connection dot 
 | `get_document` | Get the current Figma page tree. 🔱 Depth-limited (default 2); deeper nodes come back as `{id,name,type}` stubs with a `childCount` |
 | `get_selection` | Get the currently selected nodes in Figma. 🔱 Depth-limited (default 2), same stub behavior as `get_document` |
 | `get_node` | Get a specific Figma node by ID (colon format, e.g. `4029:12345`). Pass `fields` to project only the paths you need — see [fork additions](#what-this-fork-adds) |
+| `get_layout_tree` | Read absolute transforms and layout bounds for every node under a capture root |
+| `get_prototype_connections` | Read prototype interactions on a node and its descendants |
+| `trace_prototype_flow` | Trace prototype navigation between screens |
 | `find_nodes` | 🔱 Search the tree by name substring, regex, and/or node type; returns lightweight rows |
 | `get_node_by_path` | 🔱 Resolve a slash-separated chain of child names (`'Hero/Card/Title'`) to a node |
 | `get_styles` | Get all local paint, text, effect, and grid styles |
@@ -119,19 +124,33 @@ The plugin UI is also de-branded and collapsed to a single line (connection dot 
 | `remove_manual_keyframe_track` | Remove a manual keyframe track from a node property (beta) |
 | `set_timeline_duration` | Set the duration of a timeline in seconds (beta) |
 | `set_node_visibility` | Show or hide specific nodes |
-| `set_text_content` | Replace the contents of a text node |
-| `set_text_properties` | Patch font, size, alignment, auto-resize, color, and bounds on a text node |
-| `set_node_properties` | Patch common node properties: name, position, size, visibility, opacity, corner radius |
+| `set_text_content` | Replace the contents of a text node (TEXT, FigJam sticky, or shape label) |
+| `set_text_properties` | Patch font, size, alignment, auto-resize, color, and bounds on text nodes/sublayers |
+| `set_node_properties` | Patch common node properties: name, position, size, visibility, opacity, corner radius (single or batch) |
 | `set_solid_fill` | Replace a node's fill or stroke with a single solid paint |
 | `set_gradient_fill` | Replace a node's fill or stroke with a linear/radial/angular/diamond gradient |
 | `set_effects` | Replace a node's effects list (drop/inner shadows, layer/background blurs) |
 | `set_stroke_properties` | Patch stroke weight, align, dash pattern, cap, and join |
-| `set_auto_layout` | Configure auto-layout direction, padding, gap, alignment, sizing, and wrap |
+| `set_auto_layout` | Configure auto-layout direction, padding, gap, alignment, sizing, and wrap (not sections) |
+| `create_page` | Create a new page in the document, optionally switching to it |
 | `create_frame` | Create a new frame, optionally under a parent |
+| `create_section` | Create a section — a named, resizable container (Figma and FigJam) |
 | `create_text` | Create a new text node |
 | `create_shape` | Create a rectangle, ellipse, or line |
+| `create_shape_with_text` | Create a FigJam shape with its own text label (SHAPE_WITH_TEXT), incl. text fill |
 | `create_image` | Create an image-backed rectangle from a local path, URL, or data URI |
+| `create_svg` | Import raw SVG markup or a workspace-local SVG file as editable vector layers |
+| `create_sticky` | Create a sticky note in FigJam |
+| `create_connector` | Create a connector between two nodes in FigJam, with attachment anchors |
+| `import_html_layers` | Bulk-import an html-figma layer tree (JSON) as frames, text, rectangles, and vectors |
 | `duplicate_nodes` | Duplicate nodes in place |
+| `duplicate_with_offset` | Duplicate nodes and move each duplicate by a fixed offset |
+| `fit_to_content` | Resize a SECTION around its children with optional padding |
+| `distribute_horizontally` | Space 3+ nodes with equal horizontal gaps (first/last stay fixed) |
+| `distribute_vertically` | Space 3+ nodes with equal vertical gaps (first/last stay fixed) |
+| `align_to_grid` | Snap node positions to a grid of the given size |
+| `place_below` | Move a node below another with gap and start/center alignment |
+| `place_right_of` | Move a node to the right of another with gap and start/center alignment |
 | `reparent_nodes` | Move nodes into another parent |
 | `group_nodes` | Wrap a list of nodes (sharing a parent) in a new group |
 | `ungroup_node` | Ungroup a group or frame — children move up to its parent |
@@ -140,6 +159,13 @@ The plugin UI is also de-branded and collapsed to a single line (connection dot 
 | `delete_nodes` | Delete nodes with explicit confirmation |
 
 All tools accept an optional `fileKey` parameter when multiple Figma files are connected. Use `list_files` to discover connected files and their keys.
+
+### Prototype Notes
+
+- Prototype tools are read-only and unavailable in FigJam. Set `includePrototype: true` on `get_node` to include the same interactions.
+- Reactions are Figma's own trigger and action data, with destinations, variables, and modes resolved to names.
+- Flow edges list their enclosing branch `conditions` from outermost to innermost (`null` marks an else branch).
+- Observed `AFTER_TIMEOUT` values are in seconds (for example, `0.8` for 800 ms).
 
 ### Configuration
 
@@ -150,11 +176,19 @@ All tools accept an optional `fileKey` parameter when multiple Figma files are c
 ### Editing Notes
 
 - Edit tools work only when the plugin is opened in Figma's design editor (Dev Mode is read-only — they will return a clear error there).
+- In **FigJam**, read tools plus the write tools (`set_text_content`, `set_text_properties`, `set_node_properties`, `set_solid_fill`, `create_text`, `create_shape`, `create_shape_with_text`, `create_sticky`, `create_connector`, `create_section`, `duplicate_nodes`, `duplicate_with_offset`, `fit_to_content`, `distribute_horizontally`, `distribute_vertically`, `align_to_grid`, `place_below`, `place_right_of`, `delete_nodes`, ...) are available. Auto-layout and motion/animation tools return a clear error in FigJam.
+- `set_text_content` / `set_text_properties` edit a TEXT node's content directly, or the text sublayer of a FigJam STICKY / SHAPE_WITH_TEXT node. Alignment and auto-resize are TEXT-node-only — they return a clear error on stickies and shapes (x/y/width/height still apply to the containing node).
+- `set_node_properties` accepts either `nodeId` or a `nodeIds` array to apply the same property changes to several nodes in one call.
+- `set_auto_layout` targets frames; SECTION nodes have no auto-layout in Figma's API and return an explicit error.
+- `fit_to_content` works on SECTION nodes only (Figma's API exposes no equivalent for other containers): it shifts children so their bounding box starts at `padding` and resizes the section to bbox + 2×padding.
 - The current user must have permission to edit the target file.
 - `delete_nodes` is intentionally gated behind `confirm: true`.
 - Text edits automatically load the fonts currently used by the target text node before applying the new content.
 - New text nodes default to `Inter Regular` unless a font is provided.
 - `create_image` reads local paths relative to the MCP server working directory unless you pass an absolute path.
+- `create_svg` accepts raw `<svg>` markup or a local SVG path inside the MCP server working directory. SVG payloads are limited to 2 MiB.
+- `import_html_layers` takes a JSON file produced by [html-figma](https://github.com/sergcen/html-to-figma)'s browser `htmlToFigma()`. The path resolves relative to the MCP server working directory and must stay inside it, even when absolute. Everything lands inside one wrapper frame, and the response reports `layerCount` against `expectedLayerCount` so partial imports are visible.
+- `create_page` returns the new page's ID — pass it as `parentId` to `create_frame` / `create_text` / `create_shape` / `create_image` to author content on that page without switching the editor.
 
 ### What You Can Build
 
@@ -164,25 +198,35 @@ The current version is intentionally limited — no components/instances, no var
 
 ## Local development
 
+This repo uses [Bun](https://bun.sh) as its package manager and script runner throughout. Install it first if you don't have it.
+
 #### 1. Clone this repository locally
 
 ```bash
 git clone git@github.com:vladmdgolam/figma-mcp-bridge.git
 ```
 
-#### 2. Build the server
+#### 2. Install root tooling
+
+Install the root dependencies once. This runs Husky's `prepare` script, which installs the Git pre-commit hook that formats staged files with Prettier.
 
 ```bash
-cd server && npm install && npm run build
+cd figma-mcp-bridge && bun install
 ```
 
-#### 3. Build the plugin
+#### 3. Build the server
+
+```bash
+cd server && bun install && bun run build
+```
+
+#### 4. Build the plugin
 
 ```bash
 cd plugin && bun install && bun run build
 ```
 
-#### 4. Add the MCP server to your favourite AI tool
+#### 5. Add the MCP server to your favourite AI tool
 
 For local development, add the following to your AI tool's MCP config:
 
@@ -193,6 +237,15 @@ For local development, add the following to your AI tool's MCP config:
     "args": ["/path/to/figma-mcp-bridge/server/dist/index.js"]
   }
 }
+```
+
+### Code style
+
+The repo is formatted with [Prettier](https://prettier.io) (config in `.prettierrc`). A Husky pre-commit hook runs `lint-staged`, which formats only your staged files, so commits stay formatted automatically. You can also run it manually:
+
+```bash
+bun run format        # format the whole repo
+bun run format:check  # verify formatting without writing (useful in CI)
 ```
 
 ## Structure
@@ -223,15 +276,15 @@ The Figma plugin is the user interface for the Figma MCP Bridge. You run this in
 ### 2. The MCP Server
 
 The MCP server is the core of the Figma MCP Bridge. It maintains a registry of WebSocket connections keyed by `fileKey`, so multiple Figma files can be connected simultaneously. The server is responsible for:
+
 - Handling WebSocket connections from one or more Figma plugin instances
 - Routing tool calls to the correct file based on `fileKey`
 - Forwarding responses back to the AI client
 - Handling leader election (as we can have only one WS connection to an MCP server at a time)
 
-
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              FIGMA (Browser)                                │
+│                           FIGMA (Desktop app)                               │
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
 │  │                         Figma Plugin                                  │  │
 │  │                    (TypeScript/React)                                 │  │
