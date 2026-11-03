@@ -251,3 +251,44 @@ export const buildExtraEffect = (raw: Params): Effect | null => {
 
   return null;
 };
+
+/** Builds a Figma Effect from the set_effects / create_style input shape. */
+export const buildEffect = (raw: Params, i: number): Effect => {
+  const extra = buildExtraEffect(raw);
+  if (extra) return extra;
+  const type = raw.type;
+  if (type === "DROP_SHADOW" || type === "INNER_SHADOW") {
+    if (typeof raw.color !== "string") {
+      throw new Error(`effects[${i}].color must be a hex string`);
+    }
+    const offset = raw.offset as { x?: unknown; y?: unknown } | undefined;
+    if (!offset || typeof offset.x !== "number" || typeof offset.y !== "number") {
+      throw new Error(`effects[${i}].offset must be {x,y} numbers`);
+    }
+    if (typeof raw.radius !== "number") {
+      throw new Error(`effects[${i}].radius must be a number`);
+    }
+    const rgb = hexToRgb(raw.color);
+    const alpha = typeof raw.opacity === "number" ? raw.opacity : 1;
+    return {
+      type,
+      color: { r: rgb.r, g: rgb.g, b: rgb.b, a: alpha },
+      offset: { x: offset.x, y: offset.y },
+      radius: raw.radius,
+      spread: typeof raw.spread === "number" ? raw.spread : 0,
+      visible: raw.visible === undefined ? true : Boolean(raw.visible),
+      blendMode: typeof raw.blendMode === "string" ? (raw.blendMode as BlendMode) : "NORMAL",
+    };
+  }
+  if (type === "LAYER_BLUR" || type === "BACKGROUND_BLUR") {
+    if (typeof raw.radius !== "number") {
+      throw new Error(`effects[${i}].radius must be a number`);
+    }
+    return {
+      type,
+      radius: raw.radius,
+      visible: raw.visible === undefined ? true : Boolean(raw.visible),
+    } as Effect;
+  }
+  throw new Error(`Unsupported effect type at effects[${i}]: ${String(type)}`);
+};

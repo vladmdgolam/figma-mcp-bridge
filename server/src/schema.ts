@@ -1433,6 +1433,258 @@ export const instanceIdsInput = z.object({
   fileKey: fileKeyField,
 });
 
+// ---------------------------------------------------------------------------
+// Variables and styles
+// ---------------------------------------------------------------------------
+
+const collectionRef = z
+  .string()
+  .min(1)
+  .describe("Variable collection id (VariableCollectionId:…) or name");
+
+const variableRef = z
+  .string()
+  .min(1)
+  .describe(
+    "Variable id (VariableID:…), name ('color/primary'), 'Collection/name' when ambiguous, or a published library variable key"
+  );
+
+const variableValue = z.union([
+  z.string().describe("COLOR: '#RRGGBB' / '#RRGGBBAA'; STRING: any text"),
+  z.number().describe("FLOAT"),
+  z.boolean().describe("BOOLEAN"),
+  z.object({ r: z.number(), g: z.number(), b: z.number(), a: z.number().optional() }),
+  z.object({ alias: variableRef }).describe("Alias another variable"),
+]);
+
+const variableScope = z.enum([
+  "ALL_SCOPES",
+  "TEXT_CONTENT",
+  "CORNER_RADIUS",
+  "WIDTH_HEIGHT",
+  "GAP",
+  "ALL_FILLS",
+  "FRAME_FILL",
+  "SHAPE_FILL",
+  "TEXT_FILL",
+  "STROKE_COLOR",
+  "STROKE_FLOAT",
+  "EFFECT_FLOAT",
+  "EFFECT_COLOR",
+  "OPACITY",
+  "COLOR_OPACITY",
+  "FONT_FAMILY",
+  "FONT_STYLE",
+  "FONT_WEIGHT",
+  "FONT_SIZE",
+  "LINE_HEIGHT",
+  "LETTER_SPACING",
+  "PARAGRAPH_SPACING",
+  "PARAGRAPH_INDENT",
+]);
+
+export const createVariableCollectionInput = z.object({
+  name: z.string().min(1),
+  modes: z
+    .array(z.string().min(1))
+    .optional()
+    .describe("Mode names, e.g. ['Light', 'Dark']. The first renames the default mode."),
+  hiddenFromPublishing: z.boolean().optional(),
+  fileKey: fileKeyField,
+});
+
+export const editVariableCollectionShape = z.object({
+  collection: collectionRef,
+  name: z.string().min(1).optional().describe("Rename the collection"),
+  addModes: z.array(z.string().min(1)).optional(),
+  renameModes: z
+    .record(z.string().min(1))
+    .optional()
+    .describe("{ '<mode id or name>': '<new name>' }"),
+  removeModes: z.array(z.string().min(1)).optional().describe("Mode ids or names"),
+  hiddenFromPublishing: z.boolean().optional(),
+  fileKey: fileKeyField,
+});
+
+export const editVariableCollectionInput = editVariableCollectionShape.refine(
+  hasAnyProperty("collection", "fileKey"),
+  "At least one change is required"
+);
+
+export const upsertVariablesInput = z.object({
+  collection: collectionRef,
+  variables: z
+    .array(
+      z.object({
+        name: z.string().min(1).describe("Variable name; slashes group it ('color/brand/primary')"),
+        type: z
+          .enum(["COLOR", "FLOAT", "STRING", "BOOLEAN"])
+          .optional()
+          .describe("Required when creating; can't change on an existing variable"),
+        values: z
+          .record(variableValue)
+          .optional()
+          .describe(
+            "{ '<mode id or name>': value }, e.g. {Light: '#FFFFFF', Dark: {alias: 'gray/900'}}"
+          ),
+        description: z.string().optional(),
+        scopes: z
+          .array(variableScope)
+          .optional()
+          .describe("Where the variable is offered in the UI (default ALL_SCOPES)"),
+        codeSyntax: z
+          .object({
+            WEB: z.string().nullable().optional(),
+            ANDROID: z.string().nullable().optional(),
+            iOS: z.string().nullable().optional(),
+          })
+          .optional()
+          .describe("Dev Mode code names, e.g. {WEB: 'var(--color-primary)'}; null removes"),
+        hiddenFromPublishing: z.boolean().optional(),
+        rename: z.string().min(1).optional().describe("Rename an existing variable"),
+      })
+    )
+    .min(1),
+  fileKey: fileKeyField,
+});
+
+export const deleteVariablesShape = z.object({
+  variables: z.array(variableRef).optional(),
+  collections: z.array(collectionRef).optional().describe("Delete whole collections"),
+  confirm: z.boolean().describe("Must be true"),
+  fileKey: fileKeyField,
+});
+
+export const deleteVariablesInput = deleteVariablesShape.refine(
+  (v) => (v.variables?.length ?? 0) + (v.collections?.length ?? 0) > 0,
+  "Pass variables and/or collections to delete"
+);
+
+export const bindVariablesInput = z.object({
+  nodeIds: z.array(createFigmaNodeIdSchema()).min(1),
+  bindings: z
+    .record(variableRef.nullable())
+    .refine((b) => Object.keys(b).length > 0, "bindings must not be empty")
+    .describe(
+      "{ field: variable | null }. Fields: width, height, opacity, visible, itemSpacing, counterAxisSpacing, padding{Top,Right,Bottom,Left}, cornerRadius / per-corner radii, min/max width/height, strokeWeight / per-side, gridRowGap, gridColumnGap; TEXT: characters, fontFamily, fontStyle, fontWeight, fontSize, lineHeight, letterSpacing, paragraphSpacing, paragraphIndent; paints: 'fills' / 'strokes' (every solid paint) or 'fills[0]'; effects: 'effects[0].color|radius|spread|offsetX|offsetY'. null unbinds."
+    ),
+  fileKey: fileKeyField,
+});
+
+export const setVariableModeInput = z.object({
+  nodeIds: z.array(createFigmaNodeIdSchema()).min(1),
+  collection: collectionRef,
+  mode: z
+    .string()
+    .min(1)
+    .nullable()
+    .describe(
+      "Mode id or name to pin on these nodes (and their children); null resets to inherited"
+    ),
+  fileKey: fileKeyField,
+});
+
+const styleTextFields = {
+  fontFamily: z.string().optional(),
+  fontStyle: z.string().optional(),
+  fontSize: z.number().positive().optional(),
+  lineHeightPx: z.number().positive().optional(),
+  lineHeightPercent: z.number().positive().optional(),
+  lineHeightAuto: z.literal(true).optional(),
+  letterSpacingPx: z.number().optional(),
+  letterSpacingPercent: z.number().optional(),
+  textCase: z
+    .enum(["ORIGINAL", "UPPER", "LOWER", "TITLE", "SMALL_CAPS", "SMALL_CAPS_FORCED"])
+    .optional(),
+  textDecoration: z.enum(["NONE", "UNDERLINE", "STRIKETHROUGH"]).optional(),
+  paragraphSpacing: z.number().min(0).optional(),
+  paragraphIndent: z.number().min(0).optional(),
+  listSpacing: z.number().min(0).optional(),
+  leadingTrim: z.enum(["NONE", "CAP_HEIGHT"]).optional(),
+  textWrapStyle: z.enum(["AUTO", "BALANCE", "PRETTY"]).optional(),
+  variables: z
+    .record(variableRef.nullable())
+    .optional()
+    .describe(
+      "TEXT styles: bind fontFamily / fontStyle / fontWeight / fontSize / lineHeight / letterSpacing / paragraphSpacing / paragraphIndent to variables"
+    ),
+};
+
+const styleFields = {
+  name: z.string().min(1).optional(),
+  description: z.string().optional(),
+  fromNodeId: createFigmaNodeIdSchema()
+    .optional()
+    .describe(
+      "Copy values from a layer: PAINT ← fills (or strokes via fromField), TEXT ← a text layer's font settings, EFFECT ← effects, GRID ← layout grids"
+    ),
+  fromField: z
+    .enum(["fills", "strokes"])
+    .optional()
+    .describe("PAINT + fromNodeId: which paints to copy (default fills)"),
+  color: z
+    .union([
+      z.string(),
+      z.object({ r: z.number(), g: z.number(), b: z.number(), a: z.number().optional() }),
+    ])
+    .optional()
+    .describe("PAINT: one solid color, '#RRGGBB' or '#RRGGBBAA'"),
+  colorVariable: variableRef
+    .nullable()
+    .optional()
+    .describe("PAINT: bind the first solid paint's color to a variable; null unbinds"),
+  effects: z.array(effectInput).optional().describe("EFFECT: same entries as set_effects"),
+  ...styleTextFields,
+};
+
+export const createStyleShape = z.object({
+  type: z.enum(["PAINT", "TEXT", "EFFECT", "GRID"]),
+  ...styleFields,
+  name: z.string().min(1).describe("Style name; slashes group it ('Brand/Primary')"),
+  applyToSource: z
+    .boolean()
+    .optional()
+    .describe("With fromNodeId: also link that layer to the new style"),
+  fileKey: fileKeyField,
+});
+
+export const createStyleInput = createStyleShape;
+
+export const editStyleShape = z.object({
+  style: z.string().min(1).describe("Local style id (S:…)"),
+  ...styleFields,
+  fileKey: fileKeyField,
+});
+
+export const editStyleInput = editStyleShape.refine(
+  hasAnyProperty("style", "fileKey"),
+  "At least one change is required"
+);
+
+const styleSlotRef = z.string().min(1).nullable().optional();
+
+export const applyStyleInput = z.object({
+  nodeIds: z.array(createFigmaNodeIdSchema()).min(1),
+  styles: z
+    .object({
+      fill: styleSlotRef.describe(
+        "PAINT style id or library key; null detaches (keeps current look)"
+      ),
+      stroke: styleSlotRef.describe("PAINT style for strokes"),
+      text: styleSlotRef.describe("TEXT style (text layers)"),
+      effect: styleSlotRef.describe("EFFECT style"),
+      grid: styleSlotRef.describe("GRID style (frames)"),
+    })
+    .refine((v) => Object.keys(v).length > 0, "styles must name at least one slot"),
+  fileKey: fileKeyField,
+});
+
+export const deleteStylesInput = z.object({
+  styles: z.array(z.string().min(1)).min(1).describe("Local style ids (S:…)"),
+  confirm: z.boolean().describe("Must be true"),
+  fileKey: fileKeyField,
+});
+
 export const toolInputSchemas = {
   get_document: z.object({
     depth: z
@@ -1725,6 +1977,17 @@ export const toolInputSchemas = {
     fileKey: fileKeyField,
   }),
 
+  create_variable_collection: createVariableCollectionInput,
+  edit_variable_collection: editVariableCollectionInput,
+  upsert_variables: upsertVariablesInput,
+  delete_variables: deleteVariablesInput,
+  bind_variables: bindVariablesInput,
+  set_variable_mode: setVariableModeInput,
+  create_style: createStyleInput,
+  edit_style: editStyleInput,
+  apply_style: applyStyleInput,
+  delete_styles: deleteStylesInput,
+
   get_components: getComponentsInput,
   get_component_info: getComponentInfoInput,
   create_component: createComponentInput,
@@ -1922,6 +2185,16 @@ const rpcToArgs: Record<
   ToolName,
   (nodeIds?: string[], params?: Record<string, unknown>) => unknown
 > = {
+  create_variable_collection: (_n, params) => ({ ...params }),
+  edit_variable_collection: (_n, params) => ({ ...params }),
+  upsert_variables: (_n, params) => ({ ...params }),
+  delete_variables: (_n, params) => ({ ...params }),
+  bind_variables: (nodeIds, params) => ({ nodeIds, ...params }),
+  set_variable_mode: (nodeIds, params) => ({ nodeIds, ...params }),
+  create_style: (_n, params) => ({ ...params }),
+  edit_style: (_n, params) => ({ ...params }),
+  apply_style: (nodeIds, params) => ({ nodeIds, ...params }),
+  delete_styles: (_n, params) => ({ ...params }),
   get_css: (nodeIds, params) => ({ nodeIds, ...params }),
   get_components: (_nodeIds, params) => ({ ...params }),
   get_component_info: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),

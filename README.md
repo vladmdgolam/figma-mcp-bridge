@@ -169,6 +169,16 @@ The plugin UI is also de-branded and collapsed to a single line (connection dot 
 | `swap_instance` | Swap instances to another component, keeping or clearing overrides |
 | `detach_instances` | Detach instances into frames |
 | `reset_instance_overrides` | Clear direct overrides on instances |
+| `create_variable_collection` | Create a variable collection with named modes |
+| `edit_variable_collection` | Rename a collection; add / rename / remove modes |
+| `upsert_variables` | Create or update many variables at once: per-mode values, aliases, scopes, code syntax |
+| `delete_variables` | Delete variables or whole collections (with confirmation) |
+| `bind_variables` | Bind layer size, spacing, radii, text, fill/stroke colors and effects to variables |
+| `set_variable_mode` | Pin a collection mode (e.g. Dark) on layers |
+| `create_style` | Create a paint / text / effect / grid style from values or by copying a layer |
+| `edit_style` | Change a local style's name, description or values |
+| `apply_style` | Link layers to styles by slot (fill, stroke, text, effect, grid) or detach |
+| `delete_styles` | Delete local styles (with confirmation) |
 
 All tools accept an optional `fileKey` parameter when multiple Figma files are connected. Use `list_files` to discover connected files and their keys.
 
@@ -185,6 +195,12 @@ All tools accept an optional `fileKey` parameter when multiple Figma files are c
 - BOOLEAN / TEXT / INSTANCE_SWAP property names carry a Figma suffix (`Label#12:3`). Every tool accepts the bare name when it's unambiguous.
 - Typical flow: `create_component` → build its contents with `create_*` (`parentId` = component id) → `edit_component` `addProperties` with `bindTo` → duplicate it and `combine_as_variants` → `create_instance` / `set_instance_properties`.
 - Library components are referenced by `componentKey` and must be published to a library the file can use.
+
+### Variables & Styles Notes
+
+- Collections, modes and variables can be referenced by name (`'Theme'`, `'Dark'`, `'color/bg'`); use `'Collection/name'` when a variable name exists in several collections.
+- Variable values: `'#RRGGBB'` / `'#RRGGBBAA'` for colors, numbers, strings, booleans, or `{ alias: 'other/variable' }`.
+- `get_node` reports linked style ids and variable bindings under `styles.tokens`; resolve them with `get_styles` / `get_variable_defs`.
 
 ### Configuration
 

@@ -104,6 +104,12 @@ type SerializedStyles = {
   maskType?: string;
   /** Text-only extras, present when not at their defaults. */
   text?: Record<string, unknown>;
+  /** Linked styles (by slot) and variable bindings (field → variable id). */
+  tokens?: {
+    styles?: Record<string, string>;
+    variables?: Record<string, string | string[]>;
+    explicitModes?: Record<string, string>;
+  };
 };
 
 type SerializedBounds = {
@@ -508,7 +514,56 @@ const serializeStyles = (node: SerializableNode): SerializedStyles => {
     styles.constraints = { horizontal: c.horizontal, vertical: c.vertical };
   }
 
+  const tokens = serializeTokens(node);
+  if (tokens) styles.tokens = tokens;
+
   return styles;
+};
+
+/** Style links and variable bindings — ids only; resolve via get_styles / get_variable_defs. */
+const serializeTokens = (node: SerializableNode): SerializedStyles["tokens"] | undefined => {
+  const n = node as SceneNode & Record<string, unknown>;
+  const out: NonNullable<SerializedStyles["tokens"]> = {};
+
+  const styles: Record<string, string> = {};
+  for (const [slot, key] of [
+    ["fill", "fillStyleId"],
+    ["stroke", "strokeStyleId"],
+    ["text", "textStyleId"],
+    ["effect", "effectStyleId"],
+    ["grid", "gridStyleId"],
+  ] as const) {
+    const id = n[key];
+    if (typeof id === "string" && id) styles[slot] = id;
+    else if (isMixed(id)) styles[slot] = "mixed";
+  }
+  if (Object.keys(styles).length) out.styles = styles;
+
+  const bound = n.boundVariables as
+    Record<string, VariableAlias | VariableAlias[] | Record<string, VariableAlias>> | undefined;
+  if (bound) {
+    const vars: Record<string, string | string[]> = {};
+    for (const [field, alias] of Object.entries(bound)) {
+      if (Array.isArray(alias)) {
+        const ids = alias.map((a) => a?.id).filter(Boolean) as string[];
+        if (ids.length) vars[field] = ids;
+      } else if (alias && "id" in alias && typeof alias.id === "string") {
+        vars[field] = alias.id;
+      } else if (alias && typeof alias === "object") {
+        // componentProperties-style nested maps
+        const ids = Object.values(alias as Record<string, VariableAlias>)
+          .map((a) => a?.id)
+          .filter(Boolean) as string[];
+        if (ids.length) vars[field] = ids;
+      }
+    }
+    if (Object.keys(vars).length) out.variables = vars;
+  }
+
+  const modes = n.explicitVariableModes as Record<string, string> | undefined;
+  if (modes && Object.keys(modes).length) out.explicitModes = modes;
+
+  return Object.keys(out).length ? out : undefined;
 };
 
 /**

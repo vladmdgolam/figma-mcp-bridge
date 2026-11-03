@@ -8,12 +8,14 @@ import {
   isComponentRequestType,
 } from "./components";
 import type { ComponentRequestType } from "./components";
+import { TOKEN_EDIT_REQUEST_TYPES, handleTokenRequest, isTokenRequestType } from "./tokens";
+import type { TokenRequestType } from "./tokens";
 import {
   applyAutoLayoutExtras,
   applyNodeExtras,
   applyStrokeExtras,
   applyTextExtras,
-  buildExtraEffect,
+  buildEffect,
 } from "./extraProps";
 
 type RequestType =
@@ -73,7 +75,8 @@ type RequestType =
   | "apply_manual_keyframe_track"
   | "remove_manual_keyframe_track"
   | "set_timeline_duration"
-  | ComponentRequestType;
+  | ComponentRequestType
+  | TokenRequestType;
 
 type ServerRequestParams = Record<string, unknown> & {
   format?: "PNG" | "SVG" | "JPG" | "PDF";
@@ -671,6 +674,7 @@ const EDIT_REQUEST_TYPES = new Set<RequestType>([
   "remove_manual_keyframe_track",
   "set_timeline_duration",
   ...COMPONENT_EDIT_REQUEST_TYPES,
+  ...TOKEN_EDIT_REQUEST_TYPES,
 ]);
 
 const requireEditorMode = (toolName: RequestType): void => {
@@ -762,6 +766,13 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
   try {
     if (EDIT_REQUEST_TYPES.has(request.type)) {
       requireEditorMode(request.type);
+    }
+    if (isTokenRequestType(request.type)) {
+      return {
+        type: request.type,
+        requestId: request.requestId,
+        data: await handleTokenRequest(request.type, request.nodeIds, request.params ?? {}),
+      };
     }
     if (isComponentRequestType(request.type)) {
       return {
@@ -901,26 +912,40 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
           data: {
             paints: paintStyles.map((style) => ({
               id: style.id,
+              key: style.key,
               name: style.name,
+              ...(style.description ? { description: style.description } : {}),
               paints: style.paints,
             })),
             text: textStyles.map((style) => ({
               id: style.id,
+              key: style.key,
               name: style.name,
+              ...(style.description ? { description: style.description } : {}),
               fontSize: style.fontSize,
               fontName: style.fontName,
               textDecoration: style.textDecoration,
               lineHeight: style.lineHeight,
               letterSpacing: style.letterSpacing,
+              textCase: style.textCase,
+              paragraphSpacing: style.paragraphSpacing,
+              paragraphIndent: style.paragraphIndent,
+              ...(style.boundVariables && Object.keys(style.boundVariables).length
+                ? { boundVariables: style.boundVariables }
+                : {}),
             })),
             effects: effectStyles.map((style) => ({
               id: style.id,
+              key: style.key,
               name: style.name,
+              ...(style.description ? { description: style.description } : {}),
               effects: style.effects,
             })),
             grids: gridStyles.map((style) => ({
               id: style.id,
+              key: style.key,
               name: style.name,
+              ...(style.description ? { description: style.description } : {}),
               layoutGrids: style.layoutGrids,
             })),
           },
@@ -1061,6 +1086,15 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
                       serializeVariableValue(value),
                     ])
                   ),
+                  ...(variable.description ? { description: variable.description } : {}),
+                  ...(variable.scopes.length &&
+                  !(variable.scopes.length === 1 && variable.scopes[0] === "ALL_SCOPES")
+                    ? { scopes: variable.scopes }
+                    : {}),
+                  ...(Object.keys(variable.codeSyntax).length
+                    ? { codeSyntax: variable.codeSyntax }
+                    : {}),
+                  ...(variable.hiddenFromPublishing ? { hiddenFromPublishing: true } : {}),
                 })),
             };
           })
@@ -1627,46 +1661,7 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
           throw new Error("effects must be an array (pass [] to clear)");
         }
 
-        const built = (params.effects as Array<Record<string, unknown>>).map((raw, i): Effect => {
-          const extra = buildExtraEffect(raw);
-          if (extra) return extra;
-          const type = raw.type;
-          if (type === "DROP_SHADOW" || type === "INNER_SHADOW") {
-            if (typeof raw.color !== "string") {
-              throw new Error(`effects[${i}].color must be a hex string`);
-            }
-            const offset = raw.offset as { x?: unknown; y?: unknown } | undefined;
-            if (!offset || typeof offset.x !== "number" || typeof offset.y !== "number") {
-              throw new Error(`effects[${i}].offset must be {x,y} numbers`);
-            }
-            if (typeof raw.radius !== "number") {
-              throw new Error(`effects[${i}].radius must be a number`);
-            }
-            const rgb = parseHexColor(raw.color);
-            const alpha = typeof raw.opacity === "number" ? raw.opacity : 1;
-            return {
-              type,
-              color: { r: rgb.r, g: rgb.g, b: rgb.b, a: alpha },
-              offset: { x: offset.x, y: offset.y },
-              radius: raw.radius,
-              spread: typeof raw.spread === "number" ? raw.spread : 0,
-              visible: raw.visible === undefined ? true : Boolean(raw.visible),
-              blendMode:
-                typeof raw.blendMode === "string" ? (raw.blendMode as BlendMode) : "NORMAL",
-            };
-          }
-          if (type === "LAYER_BLUR" || type === "BACKGROUND_BLUR") {
-            if (typeof raw.radius !== "number") {
-              throw new Error(`effects[${i}].radius must be a number`);
-            }
-            return {
-              type,
-              radius: raw.radius,
-              visible: raw.visible === undefined ? true : Boolean(raw.visible),
-            } as Effect;
-          }
-          throw new Error(`Unsupported effect type at effects[${i}]: ${String(type)}`);
-        });
+        const built = (params.effects as Array<Record<string, unknown>>).map(buildEffect);
 
         (node as BlendMixin & { effects: ReadonlyArray<Effect> }).effects = built;
 

@@ -53,6 +53,16 @@ import {
   setInstancePropertiesInput,
   swapInstanceShape,
   instanceIdsInput,
+  createVariableCollectionInput,
+  editVariableCollectionShape,
+  upsertVariablesInput,
+  deleteVariablesShape,
+  bindVariablesInput,
+  setVariableModeInput,
+  createStyleShape,
+  editStyleShape,
+  applyStyleInput,
+  deleteStylesInput,
   MAX_SVG_BYTES,
   toolInputSchemas,
 } from "./schema.js";
@@ -1104,6 +1114,70 @@ export function registerTools(server: McpServer, node: Node, port: number): void
         "Remove all direct overrides on instances so they match their main component again. When multiple files are connected, specify fileKey.",
       shape: instanceIdsInput.shape,
       ids: "nodeIds",
+    },
+    // Variables and styles.
+    {
+      name: "create_variable_collection",
+      description:
+        "Create a variable collection with named modes (e.g. modes: ['Light','Dark']). Add variables with upsert_variables. Read existing ones with get_variable_defs. When multiple files are connected, specify fileKey.",
+      shape: createVariableCollectionInput.shape,
+    },
+    {
+      name: "edit_variable_collection",
+      description:
+        "Rename a variable collection, add / rename / remove modes, or hide it from publishing. Collection and modes can be referenced by id or name. When multiple files are connected, specify fileKey.",
+      shape: editVariableCollectionShape.shape,
+    },
+    {
+      name: "upsert_variables",
+      description:
+        "Create or update many variables in one collection in one call (matched by name): type (COLOR/FLOAT/STRING/BOOLEAN), per-mode values (hex colors, numbers, strings, booleans, or {alias: 'other/variable'}), description, scopes, code syntax, rename. Aliases may point at variables created earlier in the same call. Ideal for importing a token set. Returns each variable with its values by mode name. When multiple files are connected, specify fileKey.",
+      shape: upsertVariablesInput.shape,
+    },
+    {
+      name: "delete_variables",
+      description:
+        "Delete variables and/or whole variable collections (by id or name). Requires confirm: true. Bound layers keep their last resolved value. When multiple files are connected, specify fileKey.",
+      shape: deleteVariablesShape.shape,
+    },
+    {
+      name: "bind_variables",
+      description:
+        "Bind layer properties to variables (or unbind with null): size, spacing, padding, radii, opacity, visibility, stroke weights, grid gaps; text characters and typography; fill/stroke colors ('fills', 'fills[0]'); effect color/radius/spread/offset ('effects[0].radius'). Variables can be referenced by id or name. When multiple files are connected, specify fileKey.",
+      shape: bindVariablesInput.shape,
+      ids: "nodeIds",
+    },
+    {
+      name: "set_variable_mode",
+      description:
+        "Pin a variable collection's mode on layers (e.g. show a frame in Dark mode); children inherit it. mode: null returns to the inherited mode. When multiple files are connected, specify fileKey.",
+      shape: setVariableModeInput.shape,
+      ids: "nodeIds",
+    },
+    {
+      name: "create_style",
+      description:
+        "Create a PAINT, TEXT, EFFECT or GRID style. Either copy values from a layer (fromNodeId, optionally linking it with applyToSource) or give them directly: PAINT color (+ colorVariable binding), TEXT font/size/line height/letter spacing/case/decoration/paragraph settings (+ variable bindings), EFFECT effects list (same shape as set_effects). Read existing styles with get_styles. When multiple files are connected, specify fileKey.",
+      shape: createStyleShape.shape,
+    },
+    {
+      name: "edit_style",
+      description:
+        "Edit a local style: rename, description, or any of its values (same fields as create_style, including re-copying from a layer). Every layer using the style updates. When multiple files are connected, specify fileKey.",
+      shape: editStyleShape.shape,
+    },
+    {
+      name: "apply_style",
+      description:
+        "Apply styles to layers by slot — fill, stroke, text, effect, grid — using a local style id or a published library style key; null detaches the style while keeping the current look. When multiple files are connected, specify fileKey.",
+      shape: applyStyleInput.shape,
+      ids: "nodeIds",
+    },
+    {
+      name: "delete_styles",
+      description:
+        "Delete local styles. Requires confirm: true. Layers that used them keep their current values. When multiple files are connected, specify fileKey.",
+      shape: deleteStylesInput.shape,
     },
   ];
 
