@@ -12,27 +12,49 @@ export const MAX_SVG_BYTES = 2 * 1024 * 1024;
  * from get_selection / get_design_context.
  */
 
+const FIGMA_NODE_ID = /^(\d+:\d+|I\d+:\d+(;\d+:\d+)+)$/;
+
+/**
+ * Normalises the node-id spellings agents copy from URLs and filenames:
+ * hyphens (`node-id=4029-12345`), URL encoding (`I498-7837%3B498-7780`,
+ * `4029%3A12345`), and stray whitespace.
+ */
+export const normalizeFigmaNodeId = (value: unknown): unknown => {
+  if (typeof value !== "string") return value;
+  let id = value.trim().replace(/\s+/g, "");
+  if (/%[0-9a-fA-F]{2}/.test(id)) {
+    try {
+      id = decodeURIComponent(id);
+    } catch {
+      // leave as-is; validation reports it
+    }
+  }
+  return /^I?\d+-\d+(;\d+-\d+)*$/.test(id) ? id.replace(/-/g, ":") : id;
+};
+
 /**
  * Creates a Zod schema that validates a Figma node ID string.
  * @returns A Zod string schema for node IDs.
  */
 const createFigmaNodeIdSchema = () =>
-  z
-    .preprocess(
-      // Figma URLs carry `node-id=4029-12345`, and exported filenames use the
-      // same hyphen form, so it leaks into agent calls constantly. Accept it
-      // and normalise rather than failing late with a regex error.
-      (value) =>
-        typeof value === "string" && /^I?\d+-\d+(;\d+-\d+)*$/.test(value)
-          ? value.replace(/-/g, ":")
-          : value,
-      z
-        .string()
-        .regex(
-          /^(\d+:\d+|I\d+:\d+(;\d+:\d+)+)$/,
-          "Node ID must use colon format, e.g. '4029:12345', or instance-child format 'I12740:17806;12740:17793'"
-        )
-    );
+  z.preprocess(
+    normalizeFigmaNodeId,
+    // Validated with refine rather than .regex() on purpose: .regex() is
+    // exported as a JSON Schema `pattern`, and strict MCP clients enforce it
+    // before the call ever reaches this preprocess — so hyphen / %3B forms
+    // were rejected client-side despite being normalisable here.
+    z
+      .string()
+      .refine(
+        (id) => FIGMA_NODE_ID.test(id),
+        (id) => ({
+          message: `Invalid node ID ${JSON.stringify(id)}: use colon format, e.g. '4029:12345', or instance-child format 'I12740:17806;12740:17793'`,
+        })
+      )
+      .describe(
+        "Figma node ID: '4029:12345', or an instance sublayer 'I12740:17806;12740:17793' (hyphen and URL-encoded forms are accepted)"
+      )
+  );
 
 /**
  * Creates a Zod schema that validates a screenshot export format.
