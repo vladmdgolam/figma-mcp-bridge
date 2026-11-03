@@ -2,6 +2,12 @@ import { serializeNode } from "./serializer";
 import type { SerializableNode } from "./serializer";
 import { addLayersToFrame } from "../html-figma/figma";
 import { getPrototypeConnections, scanPrototype, tracePrototypeFlow } from "./prototype";
+import {
+  COMPONENT_EDIT_REQUEST_TYPES,
+  handleComponentRequest,
+  isComponentRequestType,
+} from "./components";
+import type { ComponentRequestType } from "./components";
 
 type RequestType =
   | "get_document"
@@ -14,6 +20,7 @@ type RequestType =
   | "get_metadata"
   | "get_design_context"
   | "get_variable_defs"
+  | "get_css"
   | "get_screenshot"
   | "find_nodes"
   | "get_node_by_path"
@@ -58,7 +65,8 @@ type RequestType =
   | "remove_animation_style"
   | "apply_manual_keyframe_track"
   | "remove_manual_keyframe_track"
-  | "set_timeline_duration";
+  | "set_timeline_duration"
+  | ComponentRequestType;
 
 type ServerRequestParams = Record<string, unknown> & {
   format?: "PNG" | "SVG" | "JPG" | "PDF";
@@ -384,9 +392,7 @@ type IsolatedSibling = {
  * hidden. De-duped across targets, so a sibling listed twice is recorded
  * only once.
  */
-const collectSiblingsToHide = (
-  targets: SceneNode[]
-): { siblings: IsolatedSibling[] } => {
+const collectSiblingsToHide = (targets: SceneNode[]): { siblings: IsolatedSibling[] } => {
   const targetIds = new Set(targets.map((t) => t.id));
   const seen = new Map<string, IsolatedSibling>();
   for (const target of targets) {
@@ -453,9 +459,7 @@ const nodeBoundsLite = (
   return undefined;
 };
 
-const resolveSearchRoot = async (
-  rootId: string | undefined
-): Promise<BaseNode & ChildrenMixin> => {
+const resolveSearchRoot = async (rootId: string | undefined): Promise<BaseNode & ChildrenMixin> => {
   if (rootId === undefined) {
     return figma.currentPage;
   }
@@ -573,9 +577,7 @@ const resolveNodeByPath = async (
 
   for (const segment of segments) {
     if (!("children" in current)) {
-      throw new Error(
-        `Cannot descend into '${segment}': '${current.name}' has no children`
-      );
+      throw new Error(`Cannot descend into '${segment}': '${current.name}' has no children`);
     }
     const next = (current as BaseNode & ChildrenMixin).children.find(
       (child) => child.name === segment
@@ -661,6 +663,7 @@ const EDIT_REQUEST_TYPES = new Set<RequestType>([
   "apply_manual_keyframe_track",
   "remove_manual_keyframe_track",
   "set_timeline_duration",
+  ...COMPONENT_EDIT_REQUEST_TYPES,
 ]);
 
 const requireEditorMode = (toolName: RequestType): void => {
@@ -686,11 +689,8 @@ const requireEditorMode = (toolName: RequestType): void => {
  */
 const requestedDepth = (request: ServerRequest, fallback: number): number => {
   const depth = request.params?.depth;
-  return typeof depth === "number" && Number.isFinite(depth) && depth >= 0
-    ? depth
-    : fallback;
+  return typeof depth === "number" && Number.isFinite(depth) && depth >= 0 ? depth : fallback;
 };
-
 
 const requirePrototypes = (toolName: string): void => {
   if (isFigJam()) {
@@ -755,6 +755,13 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
   try {
     if (EDIT_REQUEST_TYPES.has(request.type)) {
       requireEditorMode(request.type);
+    }
+    if (isComponentRequestType(request.type)) {
+      return {
+        type: request.type,
+        requestId: request.requestId,
+        data: await handleComponentRequest(request.type, request.nodeIds, request.params ?? {}),
+      };
     }
     switch (request.type) {
       case "get_document":
@@ -939,12 +946,7 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
         const contextNodes =
           selection.length > 0
             ? selection.map((node) => serializeNode(node, depth))
-            : [
-                serializeNode(
-                  figma.currentPage as unknown as SceneNode,
-                  depth
-                ),
-              ];
+            : [serializeNode(figma.currentPage as unknown as SceneNode, depth)];
 
         return {
           type: request.type,
@@ -958,6 +960,21 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
             selectionCount: selection.length,
             context: contextNodes,
           },
+        };
+      }
+      case "get_css": {
+        if (!request.nodeIds || request.nodeIds.length === 0) {
+          throw new Error("nodeIds is required for get_css");
+        }
+        const results = [];
+        for (const nodeId of request.nodeIds) {
+          const node = await getSceneNodeById(nodeId);
+          results.push({ nodeId: node.id, nodeName: node.name, css: await node.getCSSAsync() });
+        }
+        return {
+          type: request.type,
+          requestId: request.requestId,
+          data: results.length === 1 ? results[0] : results,
         };
       }
       case "get_variable_defs": {
@@ -1077,9 +1094,7 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
         }
 
         const isolate = request.params?.isolate === true;
-        const isolation = isolate
-          ? collectSiblingsToHide(targetNodes)
-          : null;
+        const isolation = isolate ? collectSiblingsToHide(targetNodes) : null;
 
         try {
           if (isolation) {
@@ -1090,9 +1105,7 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
 
           const exports = await Promise.all(
             targetNodes.map(async (node) => {
-              const commonSettings = clip
-                ? { contentsOnly: true, useAbsoluteBounds: true }
-                : {};
+              const commonSettings = clip ? { contentsOnly: true, useAbsoluteBounds: true } : {};
               const settings: ExportSettings =
                 format === "SVG"
                   ? { format: "SVG", ...commonSettings }
@@ -1141,9 +1154,7 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
       }
       case "find_nodes": {
         const matches = await findNodesInTree(
-          typeof request.params?.root === "string"
-            ? (request.params.root as string)
-            : undefined,
+          typeof request.params?.root === "string" ? (request.params.root as string) : undefined,
           {
             name:
               typeof request.params?.name === "string"
@@ -1158,11 +1169,8 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
                 ? (request.params.type as string)
                 : undefined,
             limit:
-              typeof request.params?.limit === "number"
-                ? (request.params.limit as number)
-                : 50,
-            includeHidden:
-              request.params?.includeHidden === true,
+              typeof request.params?.limit === "number" ? (request.params.limit as number) : 50,
+            includeHidden: request.params?.includeHidden === true,
           }
         );
         return {
@@ -1198,9 +1206,7 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
           throw new Error("path is required for get_node_by_path");
         }
         const rootId =
-          typeof request.params?.root === "string"
-            ? (request.params.root as string)
-            : undefined;
+          typeof request.params?.root === "string" ? (request.params.root as string) : undefined;
         const result = await resolveNodeByPath(rootId, rawPath);
         return {
           type: request.type,
@@ -1336,6 +1342,15 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
             node.textAutoResize = params.textAutoResize;
             applied.textAutoResize = node.textAutoResize;
           }
+        }
+
+        if (
+          params.textWrapStyle === "AUTO" ||
+          params.textWrapStyle === "BALANCE" ||
+          params.textWrapStyle === "PRETTY"
+        ) {
+          text.textWrapStyle = params.textWrapStyle;
+          applied.textWrapStyle = text.textWrapStyle;
         }
 
         if (typeof params.lineHeightPx === "number") {
@@ -1783,7 +1798,9 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
           params.primaryAxisAlignItems === "MIN" ||
           params.primaryAxisAlignItems === "MAX" ||
           params.primaryAxisAlignItems === "CENTER" ||
-          params.primaryAxisAlignItems === "SPACE_BETWEEN"
+          params.primaryAxisAlignItems === "SPACE_BETWEEN" ||
+          params.primaryAxisAlignItems === "SPACE_EVENLY" ||
+          params.primaryAxisAlignItems === "SPACE_AROUND"
         ) {
           frame.primaryAxisAlignItems = params.primaryAxisAlignItems;
           applied.primaryAxisAlignItems = params.primaryAxisAlignItems;

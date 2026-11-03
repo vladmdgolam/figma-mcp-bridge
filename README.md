@@ -157,6 +157,18 @@ The plugin UI is also de-branded and collapsed to a single line (connection dot 
 | `set_selection` | Set the page selection to a list of node IDs (works in Dev Mode) |
 | `scroll_and_zoom_into_view` | Frame the viewport around the given nodes (works in Dev Mode) |
 | `delete_nodes` | Delete nodes with explicit confirmation |
+| `get_css` | Figma's Dev Mode CSS for nodes as a property→value map |
+| `get_components` | List local components / component sets (page or document) with keys and property summaries |
+| `get_component_info` | Property definitions, variants, bound layers, instances; for an instance: main component, values, overrides |
+| `create_component` | New empty component, or convert existing layers into components in place |
+| `combine_as_variants` | Combine components into a component set |
+| `edit_component` | Rename/describe, set a variant's values, add/edit/delete component properties (with layer binding) |
+| `bind_component_property` | Bind layers to BOOLEAN / TEXT / INSTANCE_SWAP properties; expose nested instances |
+| `create_instance` | Insert an instance of a local or library component, picking variant and property values |
+| `set_instance_properties` | Set variant / text / boolean / instance-swap values on instances |
+| `swap_instance` | Swap instances to another component, keeping or clearing overrides |
+| `detach_instances` | Detach instances into frames |
+| `reset_instance_overrides` | Clear direct overrides on instances |
 
 All tools accept an optional `fileKey` parameter when multiple Figma files are connected. Use `list_files` to discover connected files and their keys.
 
@@ -166,6 +178,13 @@ All tools accept an optional `fileKey` parameter when multiple Figma files are c
 - Reactions are Figma's own trigger and action data, with destinations, variables, and modes resolved to names.
 - Flow edges list their enclosing branch `conditions` from outermost to innermost (`null` marks an else branch).
 - Observed `AFTER_TIMEOUT` values are in seconds (for example, `0.8` for 800 ms).
+
+### Component Notes
+
+- Component tools are unavailable in FigJam. Read tools (`get_components`, `get_component_info`) also work in Dev Mode.
+- BOOLEAN / TEXT / INSTANCE_SWAP property names carry a Figma suffix (`Label#12:3`). Every tool accepts the bare name when it's unambiguous.
+- Typical flow: `create_component` → build its contents with `create_*` (`parentId` = component id) → `edit_component` `addProperties` with `bindTo` → duplicate it and `combine_as_variants` → `create_instance` / `set_instance_properties`.
+- Library components are referenced by `componentKey` and must be published to a library the file can use.
 
 ### Configuration
 

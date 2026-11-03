@@ -353,9 +353,7 @@ export const saveChildrenJsonInput = z.object({
 export const findNodesInput = z.object({
   root: createFigmaNodeIdSchema()
     .optional()
-    .describe(
-      "Root node ID to search under. Omit to search the entire current page."
-    ),
+    .describe("Root node ID to search under. Omit to search the entire current page."),
   name: z
     .string()
     .optional()
@@ -371,16 +369,8 @@ export const findNodesInput = z.object({
   type: z
     .string()
     .optional()
-    .describe(
-      "Filter by node type, e.g. 'ELLIPSE', 'FRAME', 'GROUP', 'TEXT'. Case-insensitive."
-    ),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(500)
-    .optional()
-    .describe("Max results (default 50)."),
+    .describe("Filter by node type, e.g. 'ELLIPSE', 'FRAME', 'GROUP', 'TEXT'. Case-insensitive."),
+  limit: z.number().int().min(1).max(500).optional().describe("Max results (default 50)."),
   includeHidden: z
     .boolean()
     .optional()
@@ -393,9 +383,7 @@ export const findNodesInput = z.object({
 export const getNodeByPathInput = z.object({
   root: createFigmaNodeIdSchema()
     .optional()
-    .describe(
-      "Root node ID to resolve the path from. Omit to start at the current page."
-    ),
+    .describe("Root node ID to resolve the path from. Omit to start at the current page."),
   path: z
     .string()
     .min(1)
@@ -526,7 +514,7 @@ export const setAutoLayoutInput = z.object({
   paddingBottom: z.number().min(0).optional(),
   paddingLeft: z.number().min(0).optional(),
   primaryAxisAlignItems: z
-    .enum(["MIN", "MAX", "CENTER", "SPACE_BETWEEN"])
+    .enum(["MIN", "MAX", "CENTER", "SPACE_BETWEEN", "SPACE_EVENLY", "SPACE_AROUND"])
     .optional()
     .describe("Alignment along the primary axis"),
   counterAxisAlignItems: z
@@ -544,7 +532,7 @@ export const setAutoLayoutInput = z.object({
   layoutWrap: z
     .enum(["NO_WRAP", "WRAP"])
     .optional()
-    .describe("Allow children to wrap onto multiple rows/columns"),
+    .describe("Allow children to wrap onto multiple rows (HORIZONTAL) or columns (VERTICAL)"),
   fileKey: fileKeyField,
 });
 
@@ -701,6 +689,10 @@ export const setTextPropertiesShape = z.object({
   textAlignHorizontal: textAlignHorizontal.optional().describe("Optional horizontal alignment"),
   textAlignVertical: textAlignVertical.optional().describe("Optional vertical alignment"),
   textAutoResize: textAutoResize.optional().describe("Optional text auto-resize mode"),
+  textWrapStyle: z
+    .enum(["AUTO", "BALANCE", "PRETTY"])
+    .optional()
+    .describe("Line breaking: BALANCE evens line lengths, PRETTY avoids orphans (CSS text-wrap)"),
   lineHeightPx: z.number().positive().optional().describe("Optional line height in pixels"),
   letterSpacingPx: z.number().optional().describe("Optional letter spacing in pixels"),
   fillHex: createHexColorSchema().optional().describe("Optional text fill color as hex"),
@@ -726,6 +718,7 @@ export const setTextPropertiesInput = setTextPropertiesShape
       value.textAlignHorizontal !== undefined ||
       value.textAlignVertical !== undefined ||
       value.textAutoResize !== undefined ||
+      value.textWrapStyle !== undefined ||
       value.lineHeightPx !== undefined ||
       value.letterSpacingPx !== undefined ||
       value.fillHex !== undefined ||
@@ -986,6 +979,275 @@ export const duplicateWithOffsetInput = z.object({
   fileKey: fileKeyField,
 });
 
+// ---------------------------------------------------------------------------
+// Components, component sets (variants), component properties and instances
+// ---------------------------------------------------------------------------
+
+const componentPropertyType = z
+  .enum(["BOOLEAN", "TEXT", "INSTANCE_SWAP", "VARIANT"])
+  .describe(
+    "BOOLEAN toggles layer visibility, TEXT drives a text layer's characters, INSTANCE_SWAP drives a nested instance's main component, VARIANT adds a variant axis (component sets only)"
+  );
+
+const propertyNameField = z
+  .string()
+  .min(1)
+  .describe(
+    "Property name. Bare names ('Label') resolve to Figma's suffixed form ('Label#12:3') when unambiguous; the full name always works."
+  );
+
+const preferredValuesField = z
+  .array(
+    z.union([
+      z.string().describe("Component/component-set node id, or a published component key"),
+      z.object({
+        key: z.string().describe("Published component or component-set key"),
+        type: z.enum(["COMPONENT", "COMPONENT_SET"]).optional(),
+      }),
+    ])
+  )
+  .optional()
+  .describe("INSTANCE_SWAP only: components offered as quick swaps in the instance panel");
+
+const propertyValueField = z.union([z.string(), z.boolean()]);
+
+const componentRefFields = {
+  componentId: createFigmaNodeIdSchema()
+    .optional()
+    .describe(
+      "Local COMPONENT or COMPONENT_SET node id. A set resolves to its default variant unless `variant` picks one."
+    ),
+  componentKey: z
+    .string()
+    .optional()
+    .describe(
+      "Published library component or component-set key (from get_components / get_component_info). Imported on demand."
+    ),
+  variant: z
+    .record(z.string())
+    .optional()
+    .describe('Pick a variant by its properties, e.g. {"Size": "Large", "State": "Hover"}'),
+};
+
+const hasComponentRef = (value: { componentId?: string; componentKey?: string }) =>
+  value.componentId !== undefined || value.componentKey !== undefined;
+
+export const getComponentsInput = z.object({
+  scope: z
+    .enum(["page", "document"])
+    .optional()
+    .describe(
+      "Search the current page (default) or every page (loads all pages; slower on big files)"
+    ),
+  nameContains: z.string().optional().describe("Case-insensitive name filter"),
+  includeVariants: z
+    .boolean()
+    .optional()
+    .describe("Also list each variant inside component sets (default false: sets only)"),
+  limit: z.number().int().min(1).max(2000).optional().describe("Max results (default 200)"),
+  fileKey: fileKeyField,
+});
+
+export const getComponentInfoInput = z.object({
+  nodeId: createFigmaNodeIdSchema().describe(
+    "COMPONENT, COMPONENT_SET, INSTANCE, or any layer inside a component"
+  ),
+  includeInstances: z
+    .boolean()
+    .optional()
+    .describe("COMPONENT only: list instances across the document (can be slow)"),
+  maxInstances: z.number().int().min(1).max(1000).optional().describe("Default 50"),
+  fileKey: fileKeyField,
+});
+
+export const createComponentShape = z.object({
+  fromNodeIds: z
+    .array(createFigmaNodeIdSchema())
+    .optional()
+    .describe(
+      "Convert existing layers (frames, groups, shapes…) into components in place, one component per node. When omitted, a new empty component is created."
+    ),
+  name: z.string().optional().describe("Component name (ignored when converting several nodes)"),
+  description: z.string().optional().describe("Component description shown in the assets panel"),
+  parentId: createFigmaNodeIdSchema()
+    .optional()
+    .describe("New component only: parent to append into (a COMPONENT_SET adds it as a variant)"),
+  x: z.number().optional().describe("New component only: x position"),
+  y: z.number().optional().describe("New component only: y position"),
+  width: z.number().positive().optional().describe("New component only: width (default 100)"),
+  height: z.number().positive().optional().describe("New component only: height (default 100)"),
+  fillHex: createHexColorSchema().optional().describe("New component only: solid fill"),
+  fillOpacity: z.number().min(0).max(1).optional().describe("Fill opacity 0–1"),
+  fileKey: fileKeyField,
+});
+
+export const createComponentInput = createComponentShape.refine(
+  (v) => v.fillOpacity === undefined || v.fillHex !== undefined,
+  "fillHex is required when fillOpacity is provided"
+);
+
+export const combineAsVariantsInput = z.object({
+  nodeIds: z
+    .array(createFigmaNodeIdSchema())
+    .min(1)
+    .describe(
+      "Components to combine. Name them 'Prop=Value, Prop2=Value' first (or via edit_component variantProperties afterwards) to get named variant axes."
+    ),
+  name: z.string().optional().describe("Name for the new component set"),
+  description: z.string().optional(),
+  parentId: createFigmaNodeIdSchema()
+    .optional()
+    .describe("Parent for the set (default: parent of the first component)"),
+  convert: z
+    .boolean()
+    .optional()
+    .describe("Convert non-component layers to components first (default false: error instead)"),
+  fileKey: fileKeyField,
+});
+
+export const editComponentShape = z.object({
+  nodeId: createFigmaNodeIdSchema().describe(
+    "COMPONENT, COMPONENT_SET, or a variant. Property changes on a variant apply to its set."
+  ),
+  name: z.string().optional().describe("Rename the node"),
+  description: z.string().optional(),
+  documentationLinks: z.array(z.string().url()).max(1).optional().describe("Pass [] to clear"),
+  variantProperties: z
+    .record(z.string())
+    .optional()
+    .describe(
+      'Variant only: set this variant\'s values, e.g. {"State": "Hover"}. A new key adds a variant axis to the set.'
+    ),
+  addProperties: z
+    .array(
+      z.object({
+        name: z.string().min(1).describe("Property name (Figma adds the #id suffix)"),
+        type: componentPropertyType,
+        defaultValue: propertyValueField
+          .optional()
+          .describe(
+            "BOOLEAN: true/false. TEXT: string. INSTANCE_SWAP: component id or key. VARIANT: required, the value existing variants get. Omitted → taken from the first bindTo layer."
+          ),
+        preferredValues: preferredValuesField,
+        bindTo: z
+          .array(createFigmaNodeIdSchema())
+          .optional()
+          .describe(
+            "Layers inside the component to bind: BOOLEAN→visible, TEXT→characters (TEXT layers), INSTANCE_SWAP→mainComponent (nested instances)"
+          ),
+      })
+    )
+    .optional(),
+  editProperties: z
+    .array(
+      z.object({
+        name: propertyNameField,
+        newName: z.string().min(1).optional(),
+        defaultValue: propertyValueField.optional().describe("Not supported for VARIANT"),
+        preferredValues: preferredValuesField,
+      })
+    )
+    .optional(),
+  deleteProperties: z
+    .array(propertyNameField)
+    .optional()
+    .describe("BOOLEAN / TEXT / INSTANCE_SWAP properties to delete"),
+  fileKey: fileKeyField,
+});
+
+export const editComponentInput = editComponentShape.refine(
+  (v) =>
+    v.name !== undefined ||
+    v.description !== undefined ||
+    v.documentationLinks !== undefined ||
+    v.variantProperties !== undefined ||
+    (v.addProperties?.length ?? 0) > 0 ||
+    (v.editProperties?.length ?? 0) > 0 ||
+    (v.deleteProperties?.length ?? 0) > 0,
+  "At least one change is required"
+);
+
+export const bindComponentPropertyShape = z.object({
+  nodeIds: z
+    .array(createFigmaNodeIdSchema())
+    .min(1)
+    .describe("Layers inside a component (not inside a nested instance)"),
+  references: z
+    .object({
+      visible: propertyNameField.nullable().optional().describe("BOOLEAN property; null unbinds"),
+      characters: propertyNameField
+        .nullable()
+        .optional()
+        .describe("TEXT property (TEXT layers only); null unbinds"),
+      mainComponent: propertyNameField
+        .nullable()
+        .optional()
+        .describe("INSTANCE_SWAP property (nested instances only); null unbinds"),
+    })
+    .optional(),
+  isExposedInstance: z
+    .boolean()
+    .optional()
+    .describe("Nested instances only: expose its properties on the parent component's instances"),
+  fileKey: fileKeyField,
+});
+
+export const bindComponentPropertyInput = bindComponentPropertyShape.refine(
+  (v) =>
+    (v.references !== undefined && Object.keys(v.references).length > 0) ||
+    v.isExposedInstance !== undefined,
+  "Provide references and/or isExposedInstance"
+);
+
+export const createInstanceShape = z.object({
+  ...componentRefFields,
+  properties: z
+    .record(propertyValueField)
+    .optional()
+    .describe("Component property values to set on the new instance (bare names OK)"),
+  name: z.string().optional(),
+  parentId: createFigmaNodeIdSchema().optional().describe("Parent to append the instance into"),
+  x: z.number().optional(),
+  y: z.number().optional(),
+  fileKey: fileKeyField,
+});
+
+export const createInstanceInput = createInstanceShape.refine(
+  hasComponentRef,
+  "componentId or componentKey is required"
+);
+
+export const setInstancePropertiesInput = z.object({
+  nodeIds: z.array(createFigmaNodeIdSchema()).min(1).describe("Instances to update"),
+  properties: z
+    .record(propertyValueField)
+    .refine((p) => Object.keys(p).length > 0, "properties must not be empty")
+    .describe(
+      'e.g. {"Size": "Large", "Label": "Buy", "Show icon": false, "Icon": "12:34"}. VARIANT values switch variant; INSTANCE_SWAP takes a component id or key.'
+    ),
+  fileKey: fileKeyField,
+});
+
+export const swapInstanceShape = z.object({
+  nodeIds: z.array(createFigmaNodeIdSchema()).min(1).describe("Instances to swap"),
+  ...componentRefFields,
+  preserveOverrides: z
+    .boolean()
+    .optional()
+    .describe("Keep overrides like the editor's swap (default true); false clears them"),
+  fileKey: fileKeyField,
+});
+
+export const swapInstanceInput = swapInstanceShape.refine(
+  hasComponentRef,
+  "componentId or componentKey is required"
+);
+
+export const instanceIdsInput = z.object({
+  nodeIds: z.array(createFigmaNodeIdSchema()).min(1).describe("INSTANCE node IDs"),
+  fileKey: fileKeyField,
+});
+
 export const toolInputSchemas = {
   get_document: z.object({
     depth: z
@@ -1114,28 +1376,27 @@ export const toolInputSchemas = {
       ),
     format: createExportFormatSchema()
       .optional()
-      .describe("Export format: PNG (default), SVG, JPG, PDF, or WEBP. WEBP is encoded server-side from a PNG export (needs the `cwebp` binary on PATH) since Figma cannot export webp directly."),
-    scale: z
-      .number()
-      .optional()
-      .describe("Export scale for raster formats (default 2)"),
+      .describe(
+        "Export format: PNG (default), SVG, JPG, PDF, or WEBP. WEBP is encoded server-side from a PNG export (needs the `cwebp` binary on PATH) since Figma cannot export webp directly."
+      ),
+    scale: z.number().optional().describe("Export scale for raster formats (default 2)"),
     outputPath: z
       .string()
       .optional()
       .describe(
-        "If set, write the exported image to this path and return only metadata. Relative paths resolve from the MCP server cwd. For multiple nodeIds, prefer save_screenshots instead.",
+        "If set, write the exported image to this path and return only metadata. Relative paths resolve from the MCP server cwd. For multiple nodeIds, prefer save_screenshots instead."
       ),
     inline: z
       .boolean()
       .optional()
       .describe(
-        "If true, return base64 image bytes inline in the response. Default false — by default the image is written to a temp file (or outputPath) and only the path + size are returned, to avoid filling the agent's context.",
+        "If true, return base64 image bytes inline in the response. Default false — by default the image is written to a temp file (or outputPath) and only the path + size are returned, to avoid filling the agent's context."
       ),
     isolate: z
       .boolean()
       .optional()
       .describe(
-        "If true, hide every sibling of each target node (other children of its parent) before exporting and restore them after — even on failure. Useful for capturing a layer cleanly without the rest of the frame. Cheaper than a manual set_node_visibility / export / restore loop and atomic.",
+        "If true, hide every sibling of each target node (other children of its parent) before exporting and restore them after — even on failure. Useful for capturing a layer cleanly without the rest of the frame. Cheaper than a manual set_node_visibility / export / restore loop and atomic."
       ),
     clip: z
       .boolean()
@@ -1163,9 +1424,9 @@ export const toolInputSchemas = {
             .string()
             .min(1)
             .describe(
-              "Output .json file path (relative paths resolve from the MCP server current working directory)",
+              "Output .json file path (relative paths resolve from the MCP server current working directory)"
             ),
-        }),
+        })
       )
       .min(1)
       .describe("List of nodes to serialize and save as JSON files"),
@@ -1291,6 +1552,23 @@ export const toolInputSchemas = {
 
   ungroup_node: ungroupNodeInput,
 
+  get_css: z.object({
+    nodeIds: z.array(createFigmaNodeIdSchema()).min(1).max(50).describe("Nodes to read CSS for"),
+    fileKey: fileKeyField,
+  }),
+
+  get_components: getComponentsInput,
+  get_component_info: getComponentInfoInput,
+  create_component: createComponentInput,
+  combine_as_variants: combineAsVariantsInput,
+  edit_component: editComponentInput,
+  bind_component_property: bindComponentPropertyInput,
+  create_instance: createInstanceInput,
+  set_instance_properties: setInstancePropertiesInput,
+  swap_instance: swapInstanceInput,
+  detach_instances: instanceIdsInput,
+  reset_instance_overrides: instanceIdsInput,
+
   set_selection: setSelectionInput,
 
   scroll_and_zoom_into_view: scrollAndZoomIntoViewInput,
@@ -1333,11 +1611,10 @@ export const toolInputSchemas = {
       .describe("List of screenshot save operations to execute in batch"),
     format: createExportFormatSchema()
       .optional()
-      .describe("Default export format: PNG (default), SVG, JPG, PDF, or WEBP. WEBP is encoded server-side from a PNG export (needs the `cwebp` binary on PATH)."),
-    scale: z
-      .number()
-      .optional()
-      .describe("Default export scale for raster formats (default 2)"),
+      .describe(
+        "Default export format: PNG (default), SVG, JPG, PDF, or WEBP. WEBP is encoded server-side from a PNG export (needs the `cwebp` binary on PATH)."
+      ),
+    scale: z.number().optional().describe("Default export scale for raster formats (default 2)"),
     clip: z
       .boolean()
       .optional()
@@ -1477,6 +1754,18 @@ const rpcToArgs: Record<
   ToolName,
   (nodeIds?: string[], params?: Record<string, unknown>) => unknown
 > = {
+  get_css: (nodeIds, params) => ({ nodeIds, ...params }),
+  get_components: (_nodeIds, params) => ({ ...params }),
+  get_component_info: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
+  create_component: (_nodeIds, params) => ({ ...params }),
+  combine_as_variants: (nodeIds, params) => ({ nodeIds, ...params }),
+  edit_component: (nodeIds, params) => ({ ...params, nodeId: nodeIds?.[0] }),
+  bind_component_property: (nodeIds, params) => ({ nodeIds, ...params }),
+  create_instance: (_nodeIds, params) => ({ ...params }),
+  set_instance_properties: (nodeIds, params) => ({ nodeIds, ...params }),
+  swap_instance: (nodeIds, params) => ({ nodeIds, ...params }),
+  detach_instances: (nodeIds, params) => ({ nodeIds, ...params }),
+  reset_instance_overrides: (nodeIds, params) => ({ nodeIds, ...params }),
   get_document: (_nodeIds, params) => ({ ...params }),
   get_selection: (_nodeIds, params) => ({ ...params }),
   get_layout_tree: (nodeIds, params) => ({ ...params, rootId: nodeIds?.[0] }),

@@ -43,6 +43,16 @@ import {
   placeBelowInput,
   placeRightOfInput,
   duplicateWithOffsetInput,
+  getComponentsInput,
+  getComponentInfoInput,
+  createComponentShape,
+  combineAsVariantsInput,
+  editComponentShape,
+  bindComponentPropertyShape,
+  createInstanceShape,
+  setInstancePropertiesInput,
+  swapInstanceShape,
+  instanceIdsInput,
   MAX_SVG_BYTES,
   toolInputSchemas,
 } from "./schema.js";
@@ -277,11 +287,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
       fileKey,
     }): Promise<ToolResult> => {
       try {
-        if (
-          outputPath !== undefined &&
-          nodeIds !== undefined &&
-          nodeIds.length > 1
-        ) {
+        if (outputPath !== undefined && nodeIds !== undefined && nodeIds.length > 1) {
           throw new Error(
             "outputPath only supports a single nodeId. Use save_screenshots for multi-node exports."
           );
@@ -301,12 +307,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
         if (isolate === true) params.isolate = true;
         if (clip !== undefined) params.clip = clip;
 
-        const resp = await node.sendWithParams(
-          "get_screenshot",
-          nodeIds,
-          params,
-          fileKey
-        );
+        const resp = await node.sendWithParams("get_screenshot", nodeIds, params, fileKey);
         if (resp.error) {
           return {
             content: [{ type: "text", text: resp.error }],
@@ -333,11 +334,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
               outputPath !== undefined && exports.length === 1
                 ? resolveAndValidateOutputPath(outputPath, process.cwd())
                 : await defaultScreenshotPath(exp, index, effectiveFormat);
-            const bytes = await writeExportToFile(
-              exp.base64,
-              target,
-              effectiveFormat
-            );
+            const bytes = await writeExportToFile(exp.base64, target, effectiveFormat);
             return {
               nodeId: exp.nodeId,
               nodeName: exp.nodeName,
@@ -396,8 +393,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
           };
         }
         const data = resp.data as
-          | { imageHash?: string; base64?: string; bytes?: number }
-          | undefined;
+          { imageHash?: string; base64?: string; bytes?: number } | undefined;
         if (!data || typeof data.base64 !== "string") {
           throw new Error("image_fill_export response missing base64");
         }
@@ -459,7 +455,13 @@ export function registerTools(server: McpServer, node: Node, port: number): void
     "save_children_json",
     "For each direct visible child of parentId, write the full serialized node to `outputDir/<name>.json`. Collapses the 'select wrapper, save each child frame' ritual into one call. Returns per-file metadata.",
     toolInputSchemas.save_children_json.shape,
-    async ({ parentId, outputDir, includeHidden, filenamePattern, fileKey }): Promise<ToolResult> => {
+    async ({
+      parentId,
+      outputDir,
+      includeHidden,
+      filenamePattern,
+      fileKey,
+    }): Promise<ToolResult> => {
       try {
         const resolvedDir = resolveAndValidateOutputPath(outputDir, process.cwd());
         await mkdir(resolvedDir, { recursive: true });
@@ -472,7 +474,14 @@ export function registerTools(server: McpServer, node: Node, port: number): void
         );
         if (childrenResp.error) throw new Error(childrenResp.error);
         const tree = childrenResp.data as
-          | { children?: Array<{ id: string; name: string; type: string; styles?: { visible?: boolean } }> }
+          | {
+              children?: Array<{
+                id: string;
+                name: string;
+                type: string;
+                styles?: { visible?: boolean };
+              }>;
+            }
           | undefined;
         const rawChildren = tree?.children ?? [];
         const targetChildren = rawChildren.filter((child) => {
@@ -580,9 +589,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
       if (type !== undefined) params.type = type;
       if (limit !== undefined) params.limit = limit;
       if (includeHidden !== undefined) params.includeHidden = includeHidden;
-      return renderResponse(() =>
-        node.sendWithParams("find_nodes", undefined, params, fileKey)
-      );
+      return renderResponse(() => node.sendWithParams("find_nodes", undefined, params, fileKey));
     }
   );
 
@@ -1010,6 +1017,115 @@ export function registerTools(server: McpServer, node: Node, port: number): void
   );
 
   server.tool(
+    "get_css",
+    "Read-only. Figma's own CSS for each node (the same declarations as Dev Mode's CSS panel: size, layout/flex, colors, borders, radii, shadows, typography) as a property→value map. Cheap way to get exact values for design-to-code without walking styles. When multiple files are connected, specify fileKey.",
+    toolInputSchemas.get_css.shape,
+    async ({ nodeIds, fileKey }): Promise<ToolResult> =>
+      renderResponse(() => node.sendWithParams("get_css", nodeIds, undefined, fileKey))
+  );
+
+  // Components: one registration per tool, all sharing the same parse → split
+  // ids → forward pattern. `ids` names the field that carries the target node(s).
+  const componentTools: Array<{
+    name: keyof typeof toolInputSchemas;
+    description: string;
+    shape: z.ZodRawShape;
+    ids?: "nodeId" | "nodeIds";
+  }> = [
+    {
+      name: "get_components",
+      description:
+        "Read-only. List local components and component sets on the current page (or the whole document with scope: 'document'), with id, key, page, description and a one-line summary of each set's properties (variant axes with their options, plus BOOLEAN/TEXT/INSTANCE_SWAP props). Variants inside sets are hidden unless includeVariants: true. Not available in FigJam. When multiple files are connected, specify fileKey.",
+      shape: getComponentsInput.shape,
+    },
+    {
+      name: "get_component_info",
+      description:
+        "Read-only. Inspect component data for one node. COMPONENT_SET: property definitions (full '#id' names, types, defaults, variant options), variants with their values, default variant, and which layers are bound to which property. COMPONENT: the same plus its set and variant values; includeInstances lists where it's used. INSTANCE: main component (id/key/set), current property values, overrides and exposed nested instances. Any other layer: its property bindings and containing component. When multiple files are connected, specify fileKey.",
+      shape: getComponentInfoInput.shape,
+      ids: "nodeId",
+    },
+    {
+      name: "create_component",
+      description:
+        "Create a component: either a new empty one (name, size, fill, parent, position — then build its contents with create_* tools using its id as parentId) or by converting existing layers in place with fromNodeIds (one component per node, like Figma's 'Create component'). Passing a COMPONENT_SET as parentId adds a new variant. When multiple files are connected, specify fileKey.",
+      shape: createComponentShape.shape,
+    },
+    {
+      name: "combine_as_variants",
+      description:
+        "Combine components into a component set (variants). Name each component 'Prop=Value, Prop2=Value' beforehand to get named variant axes; otherwise Figma uses 'Property 1'. convert: true turns plain layers into components first. Lay the set out afterwards with set_auto_layout. To add a variant later, duplicate_nodes a variant (the copy stays in the set) and set its values with edit_component variantProperties. When multiple files are connected, specify fileKey.",
+      shape: combineAsVariantsInput.shape,
+    },
+    {
+      name: "edit_component",
+      description:
+        "Edit a component, component set or variant: rename, description, documentation link, a variant's values (variantProperties), and component properties — addProperties (BOOLEAN/TEXT/INSTANCE_SWAP/VARIANT, optionally bindTo layers in the same call so e.g. a TEXT prop drives a label), editProperties (rename, default, preferred swaps) and deleteProperties. Applied in order delete → edit → add. Property changes on a variant go to its set. Returns the final property definitions with their full '#id' names. When multiple files are connected, specify fileKey.",
+      shape: editComponentShape.shape,
+      ids: "nodeId",
+    },
+    {
+      name: "bind_component_property",
+      description:
+        "Bind (or with null, unbind) layers inside a component to its properties: visible→BOOLEAN, characters→TEXT (text layers), mainComponent→INSTANCE_SWAP (nested instances). Also sets isExposedInstance on nested instances to surface their properties on the parent. Use edit_component addProperties with bindTo to create and bind in one step. When multiple files are connected, specify fileKey.",
+      shape: bindComponentPropertyShape.shape,
+      ids: "nodeIds",
+    },
+    {
+      name: "create_instance",
+      description:
+        "Insert an instance of a local component/component set (componentId) or a published library component (componentKey, imported on demand). Pick a variant with `variant` and set property values with `properties` (bare names OK). Returns the instance id and its property values. When multiple files are connected, specify fileKey.",
+      shape: createInstanceShape.shape,
+    },
+    {
+      name: "set_instance_properties",
+      description:
+        "Set component property values on one or more instances: VARIANT values (switches variant), TEXT, BOOLEAN and INSTANCE_SWAP (component id or key). Bare property names resolve to Figma's '#id' names when unambiguous. Properties of exposed nested instances are set on those nested instance ids (see get_component_info exposedInstances). When multiple files are connected, specify fileKey.",
+      shape: setInstancePropertiesInput.shape,
+      ids: "nodeIds",
+    },
+    {
+      name: "swap_instance",
+      description:
+        "Swap instances to a different component (local componentId or library componentKey, optional variant). Keeps overrides like the editor's swap by default; preserveOverrides: false resets them. When multiple files are connected, specify fileKey.",
+      shape: swapInstanceShape.shape,
+      ids: "nodeIds",
+    },
+    {
+      name: "detach_instances",
+      description:
+        "Detach instances from their components, turning each into a plain frame (nested instances inside it stay instances). Returns the new frame ids. When multiple files are connected, specify fileKey.",
+      shape: instanceIdsInput.shape,
+      ids: "nodeIds",
+    },
+    {
+      name: "reset_instance_overrides",
+      description:
+        "Remove all direct overrides on instances so they match their main component again. When multiple files are connected, specify fileKey.",
+      shape: instanceIdsInput.shape,
+      ids: "nodeIds",
+    },
+  ];
+
+  for (const tool of componentTools) {
+    server.tool(tool.name, tool.description, tool.shape, async (args): Promise<ToolResult> => {
+      const parsed = parseToolInput(
+        toolInputSchemas[tool.name] as z.ZodType<Record<string, unknown>, z.ZodTypeDef, unknown>,
+        args
+      );
+      if (!parsed.success) return parsed.error;
+      const { fileKey, nodeId, nodeIds, ...params } = parsed.data as Record<string, unknown> & {
+        fileKey?: string;
+        nodeId?: string;
+        nodeIds?: string[];
+      };
+      const ids =
+        tool.ids === "nodeId" ? [nodeId as string] : tool.ids === "nodeIds" ? nodeIds : undefined;
+      return renderResponse(() => node.sendWithParams(tool.name, ids, params, fileKey));
+    });
+  }
+
+  server.tool(
     "set_selection",
     "Set the current page selection to a list of node IDs. Pass an empty array to clear the selection. Works in Figma design editor, Dev Mode, and FigJam.",
     setSelectionInput.shape,
@@ -1291,10 +1407,7 @@ function resolveOutputRoot(workspaceRoot: string): string {
  * @param workspaceRoot - Root directory that must contain the resolved path.
  * @returns Absolute path inside the workspace root.
  */
-function resolveAndValidateOutputPath(
-  outputPath: string,
-  workspaceRoot: string
-): string {
+function resolveAndValidateOutputPath(outputPath: string, workspaceRoot: string): string {
   const resolvedRoot = resolveOutputRoot(workspaceRoot);
   const resolvedPath = path.resolve(resolvedRoot, outputPath);
   const relativePath = path.relative(resolvedRoot, resolvedPath);
@@ -1937,7 +2050,8 @@ async function encodeWebp(png: Buffer, quality: number): Promise<Buffer> {
       });
       proc.on("close", (code) => {
         if (code === 0) resolve();
-        else reject(new Error(`cwebp exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`));
+        else
+          reject(new Error(`cwebp exited with code ${code}${stderr ? `: ${stderr.trim()}` : ""}`));
       });
     });
     return await readFile(dst);
