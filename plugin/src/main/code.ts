@@ -8,6 +8,13 @@ import {
   isComponentRequestType,
 } from "./components";
 import type { ComponentRequestType } from "./components";
+import {
+  applyAutoLayoutExtras,
+  applyNodeExtras,
+  applyStrokeExtras,
+  applyTextExtras,
+  buildExtraEffect,
+} from "./extraProps";
 
 type RequestType =
   | "get_document"
@@ -1353,6 +1360,8 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
           applied.textWrapStyle = text.textWrapStyle;
         }
 
+        applyTextExtras(text, params, applied);
+
         if (typeof params.lineHeightPx === "number") {
           text.lineHeight = {
             unit: "PIXELS",
@@ -1474,6 +1483,8 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
             cornerNode.cornerRadius = params.cornerRadius;
             applied.cornerRadius = cornerNode.cornerRadius;
           }
+
+          applyNodeExtras(node, params, applied);
 
           return applied;
         };
@@ -1617,6 +1628,8 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
         }
 
         const built = (params.effects as Array<Record<string, unknown>>).map((raw, i): Effect => {
+          const extra = buildExtraEffect(raw);
+          if (extra) return extra;
           const type = raw.type;
           if (type === "DROP_SHADOW" || type === "INNER_SHADOW") {
             if (typeof raw.color !== "string") {
@@ -1728,6 +1741,8 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
           applied.strokeJoin = params.strokeJoin;
         }
 
+        applyStrokeExtras(node, params, applied);
+
         return {
           type: request.type,
           requestId: request.requestId,
@@ -1761,7 +1776,8 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
         if (
           params.layoutMode === "NONE" ||
           params.layoutMode === "HORIZONTAL" ||
-          params.layoutMode === "VERTICAL"
+          params.layoutMode === "VERTICAL" ||
+          params.layoutMode === "GRID"
         ) {
           frame.layoutMode = params.layoutMode;
           applied.layoutMode = params.layoutMode;
@@ -1828,6 +1844,8 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
           (frame as FrameNode & { layoutWrap: "NO_WRAP" | "WRAP" }).layoutWrap = params.layoutWrap;
           applied.layoutWrap = params.layoutWrap;
         }
+
+        applyAutoLayoutExtras(frame, params, applied);
 
         return {
           type: request.type,

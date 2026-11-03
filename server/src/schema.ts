@@ -160,6 +160,36 @@ export const setGradientFillInput = z.object({
   fileKey: fileKeyField,
 });
 
+const blendMode = z.enum([
+  "PASS_THROUGH",
+  "NORMAL",
+  "DARKEN",
+  "MULTIPLY",
+  "LINEAR_BURN",
+  "COLOR_BURN",
+  "LIGHTEN",
+  "SCREEN",
+  "LINEAR_DODGE",
+  "COLOR_DODGE",
+  "OVERLAY",
+  "SOFT_LIGHT",
+  "HARD_LIGHT",
+  "DIFFERENCE",
+  "EXCLUSION",
+  "HUE",
+  "SATURATION",
+  "COLOR",
+  "LUMINOSITY",
+]);
+
+/** True when any key other than the listed transport keys is set. */
+const hasAnyProperty =
+  (...transportKeys: string[]) =>
+  (value: Record<string, unknown>): boolean =>
+    Object.entries(value).some(([k, v]) => v !== undefined && !transportKeys.includes(k));
+
+const nullableSize = z.number().min(0).nullable().optional();
+
 export const setNodePropertiesShape = z.object({
   nodeId: createFigmaNodeIdSchema()
     .optional()
@@ -180,6 +210,56 @@ export const setNodePropertiesShape = z.object({
   opacity: z.number().min(0).max(1).optional().describe("Optional opacity from 0 to 1"),
   visible: z.boolean().optional().describe("Optional visibility"),
   cornerRadius: z.number().min(0).optional().describe("Optional corner radius"),
+  topLeftRadius: z.number().min(0).optional().describe("Per-corner radius"),
+  topRightRadius: z.number().min(0).optional(),
+  bottomRightRadius: z.number().min(0).optional(),
+  bottomLeftRadius: z.number().min(0).optional(),
+  cornerSmoothing: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("iOS-style smooth corners, 0–1 (0.6 ≈ Apple squircle)"),
+  layoutSizingHorizontal: z
+    .enum(["FIXED", "HUG", "FILL"])
+    .optional()
+    .describe(
+      "Auto-layout sizing: HUG needs an auto-layout frame or text; FILL needs an auto-layout parent"
+    ),
+  layoutSizingVertical: z.enum(["FIXED", "HUG", "FILL"]).optional(),
+  layoutPositioning: z
+    .enum(["AUTO", "ABSOLUTE"])
+    .optional()
+    .describe("ABSOLUTE takes a child of an auto-layout frame out of the flow"),
+  minWidth: nullableSize.describe("Auto-layout min width; null clears"),
+  maxWidth: nullableSize.describe("Auto-layout max width; null clears"),
+  minHeight: nullableSize.describe("Auto-layout min height; null clears"),
+  maxHeight: nullableSize.describe("Auto-layout max height; null clears"),
+  constraints: z
+    .object({
+      horizontal: z.enum(["MIN", "CENTER", "MAX", "STRETCH", "SCALE"]),
+      vertical: z.enum(["MIN", "CENTER", "MAX", "STRETCH", "SCALE"]),
+    })
+    .optional()
+    .describe("Resizing constraints relative to a non-auto-layout parent frame"),
+  clipsContent: z.boolean().optional().describe("Frames: clip content to bounds"),
+  blendMode: blendMode.optional().describe("Layer blend mode"),
+  locked: z.boolean().optional(),
+  isMask: z.boolean().optional().describe("Use this layer as a mask for the siblings above it"),
+  maskType: z.enum(["ALPHA", "VECTOR", "LUMINANCE"]).optional(),
+  gridRowSpan: z.number().int().min(1).optional().describe("Child of a GRID frame: rows spanned"),
+  gridColumnSpan: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe("Child of a GRID frame: columns spanned"),
+  gridChildHorizontalAlign: z.enum(["MIN", "CENTER", "MAX", "AUTO"]).optional(),
+  gridChildVerticalAlign: z.enum(["MIN", "CENTER", "MAX", "AUTO"]).optional(),
+  gridPosition: z
+    .object({ row: z.number().int().min(0), column: z.number().int().min(0) })
+    .optional()
+    .describe("Child of a MANUAL-positioned GRID frame: zero-based cell to place it in"),
   fileKey: fileKeyField,
 });
 
@@ -188,19 +268,7 @@ export const setNodePropertiesInput = setNodePropertiesShape
     (value) => value.nodeId !== undefined || value.nodeIds !== undefined,
     "Either nodeId or nodeIds is required"
   )
-  .refine(
-    (value) =>
-      value.name !== undefined ||
-      value.x !== undefined ||
-      value.y !== undefined ||
-      value.width !== undefined ||
-      value.height !== undefined ||
-      value.rotation !== undefined ||
-      value.opacity !== undefined ||
-      value.visible !== undefined ||
-      value.cornerRadius !== undefined,
-    "At least one property must be provided"
-  );
+  .refine(hasAnyProperty("nodeId", "nodeIds", "fileKey"), "At least one property must be provided");
 
 const solidFillTarget = z
   .enum(["fill", "stroke"])
@@ -256,28 +324,6 @@ export const setSolidFillInput = setSolidFillShape.transform(
   }
 );
 
-const blendMode = z.enum([
-  "PASS_THROUGH",
-  "NORMAL",
-  "DARKEN",
-  "MULTIPLY",
-  "LINEAR_BURN",
-  "COLOR_BURN",
-  "LIGHTEN",
-  "SCREEN",
-  "LINEAR_DODGE",
-  "COLOR_DODGE",
-  "OVERLAY",
-  "SOFT_LIGHT",
-  "HARD_LIGHT",
-  "DIFFERENCE",
-  "EXCLUSION",
-  "HUE",
-  "SATURATION",
-  "COLOR",
-  "LUMINOSITY",
-]);
-
 const shadowEffect = z.object({
   type: z.enum(["DROP_SHADOW", "INNER_SHADOW"]),
   color: createHexColorSchema().describe("Shadow color as hex"),
@@ -299,10 +345,62 @@ const shadowEffect = z.object({
   visible: z.boolean().optional().describe("Default true"),
 });
 
+const vector2 = z.object({ x: z.number(), y: z.number() });
+
 const blurEffect = z.object({
   type: z.enum(["LAYER_BLUR", "BACKGROUND_BLUR"]),
-  radius: z.number().min(0).describe("Blur radius (>= 0)"),
+  radius: z.number().min(0).describe("Blur radius (>= 0); the end radius for progressive blur"),
+  blurType: z.enum(["NORMAL", "PROGRESSIVE"]).optional().describe("Default NORMAL"),
+  startRadius: z
+    .number()
+    .min(0)
+    .optional()
+    .describe("PROGRESSIVE: radius at the start (default 0)"),
+  startOffset: vector2
+    .optional()
+    .describe("PROGRESSIVE: start point in 0–1 node-relative coords (default {x:0.5,y:0})"),
+  endOffset: vector2
+    .optional()
+    .describe("PROGRESSIVE: end point in 0–1 node-relative coords (default {x:0.5,y:1})"),
   visible: z.boolean().optional().describe("Default true"),
+});
+
+const noiseEffect = z.object({
+  type: z.literal("NOISE"),
+  noiseType: z.enum(["MONOTONE", "DUOTONE", "MULTITONE"]).optional().describe("Default MONOTONE"),
+  color: createHexColorSchema().optional().describe("Noise color (default #000000)"),
+  colorOpacity: z.number().min(0).max(1).optional().describe("Noise color alpha (default 0.25)"),
+  secondaryColor: createHexColorSchema().optional().describe("DUOTONE second color"),
+  secondaryColorOpacity: z.number().min(0).max(1).optional(),
+  opacity: z.number().min(0).max(1).optional().describe("MULTITONE opacity (default 1)"),
+  noiseSize: z.number().positive().optional().describe("Grain size (default 1)"),
+  density: z.number().min(0).max(1).optional().describe("Grain density 0–1 (default 0.5)"),
+  blendMode: blendMode.optional().describe("Default NORMAL"),
+  visible: z.boolean().optional(),
+});
+
+const textureEffect = z.object({
+  type: z.literal("TEXTURE"),
+  noiseSize: z.number().positive().optional().describe("Texture grain size (default 4)"),
+  radius: z.number().min(0).optional().describe("Texture distortion radius (default 4)"),
+  clipToShape: z.boolean().optional().describe("Default true"),
+  visible: z.boolean().optional(),
+});
+
+const glassEffect = z.object({
+  type: z.literal("GLASS"),
+  lightIntensity: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Highlight strength 0–1 (default 0.5)"),
+  lightAngle: z.number().optional().describe("Highlight angle in degrees (default -45)"),
+  refraction: z.number().min(0).max(1).optional().describe("Edge refraction 0–1 (default 0.5)"),
+  depth: z.number().min(0).optional().describe("Bevel depth (default 20)"),
+  dispersion: z.number().min(0).max(1).optional().describe("Chromatic dispersion 0–1 (default 0)"),
+  radius: z.number().min(0).optional().describe("Frost blur radius (default 4)"),
+  visible: z.boolean().optional(),
 });
 
 export const imageFillExportInput = z.object({
@@ -395,7 +493,15 @@ export const getNodeByPathInput = z.object({
 
 const effectInput = z.object({
   type: z
-    .enum(["DROP_SHADOW", "INNER_SHADOW", "LAYER_BLUR", "BACKGROUND_BLUR"])
+    .enum([
+      "DROP_SHADOW",
+      "INNER_SHADOW",
+      "LAYER_BLUR",
+      "BACKGROUND_BLUR",
+      "NOISE",
+      "TEXTURE",
+      "GLASS",
+    ])
     .describe("Effect type"),
   color: createHexColorSchema().optional().describe("Required for shadow effects"),
   opacity: z.number().min(0).max(1).optional().describe("Shadow alpha 0..1 (default 1)"),
@@ -415,9 +521,31 @@ const effectInput = z.object({
     ),
   blendMode: blendMode.optional().describe("Default NORMAL"),
   visible: z.boolean().optional().describe("Default true"),
+  blurType: blurEffect.shape.blurType,
+  startRadius: blurEffect.shape.startRadius,
+  startOffset: blurEffect.shape.startOffset,
+  endOffset: blurEffect.shape.endOffset,
+  noiseType: noiseEffect.shape.noiseType,
+  colorOpacity: noiseEffect.shape.colorOpacity,
+  secondaryColor: noiseEffect.shape.secondaryColor,
+  secondaryColorOpacity: noiseEffect.shape.secondaryColorOpacity,
+  noiseSize: noiseEffect.shape.noiseSize,
+  density: noiseEffect.shape.density,
+  clipToShape: textureEffect.shape.clipToShape,
+  lightIntensity: glassEffect.shape.lightIntensity,
+  lightAngle: glassEffect.shape.lightAngle,
+  refraction: glassEffect.shape.refraction,
+  depth: glassEffect.shape.depth,
+  dispersion: glassEffect.shape.dispersion,
 });
 
-const effectRuntimeSchema = z.discriminatedUnion("type", [shadowEffect, blurEffect]);
+const effectRuntimeSchema = z.discriminatedUnion("type", [
+  shadowEffect,
+  blurEffect,
+  noiseEffect,
+  textureEffect,
+  glassEffect,
+]);
 
 export const setSelectionInput = z.object({
   nodeIds: z
@@ -457,7 +585,7 @@ export const setEffectsShape = z.object({
   effects: z
     .array(effectInput)
     .describe(
-      "Full replacement list of effects. Pass [] to clear all effects. Each entry is a drop/inner shadow or a layer/background blur."
+      "Full replacement list of effects. Pass [] to clear all effects. Each entry is a drop/inner shadow, a layer/background blur (normal or progressive), or a NOISE / TEXTURE / GLASS effect."
     ),
   fileKey: fileKeyField,
 });
@@ -492,15 +620,22 @@ export const setStrokePropertiesInput = z.object({
     .optional()
     .describe("End-cap style (only meaningful on open paths/lines)"),
   strokeJoin: z.enum(["MITER", "BEVEL", "ROUND"]).optional().describe("Corner join style"),
+  strokeTopWeight: z.number().min(0).optional().describe("Per-side stroke weight (frames/rects)"),
+  strokeRightWeight: z.number().min(0).optional(),
+  strokeBottomWeight: z.number().min(0).optional(),
+  strokeLeftWeight: z.number().min(0).optional(),
+  strokeMiterLimit: z.number().min(0).optional().describe("Miter limit for MITER joins"),
   fileKey: fileKeyField,
 });
 
 export const setAutoLayoutInput = z.object({
   nodeId: createFigmaNodeIdSchema().describe("The node ID to update (must be a frame)"),
   layoutMode: z
-    .enum(["NONE", "HORIZONTAL", "VERTICAL"])
+    .enum(["NONE", "HORIZONTAL", "VERTICAL", "GRID"])
     .optional()
-    .describe("Auto-layout direction. 'NONE' disables auto-layout."),
+    .describe(
+      "Auto-layout direction, or GRID for a CSS-grid-like layout. 'NONE' disables auto-layout."
+    ),
   itemSpacing: z
     .number()
     .optional()
@@ -529,6 +664,35 @@ export const setAutoLayoutInput = z.object({
     .enum(["FIXED", "AUTO"])
     .optional()
     .describe("AUTO = hug contents along counter axis"),
+  counterAxisAlignContent: z
+    .enum(["AUTO", "SPACE_BETWEEN"])
+    .optional()
+    .describe("Wrapped layouts: how rows/columns are distributed along the counter axis"),
+  itemReverseZIndex: z.boolean().optional().describe("Canvas stacking: first item on top"),
+  strokesIncludedInLayout: z
+    .boolean()
+    .optional()
+    .describe("Include strokes in layout sizing (CSS border-box)"),
+  gridRowCount: z.number().int().min(1).optional().describe("GRID: number of rows"),
+  gridColumnCount: z.number().int().min(1).optional().describe("GRID: number of columns"),
+  gridRowGap: z.number().min(0).optional().describe("GRID: gap between rows"),
+  gridColumnGap: z.number().min(0).optional().describe("GRID: gap between columns"),
+  gridRowSizes: z
+    .array(
+      z.object({ type: z.enum(["FLEX", "FIXED", "HUG"]), value: z.number().min(0).optional() })
+    )
+    .optional()
+    .describe(
+      "GRID: per-row track sizes, e.g. [{type:'FIXED',value:48},{type:'FLEX',value:1}]. Length sets the row count."
+    ),
+  gridColumnSizes: z
+    .array(
+      z.object({ type: z.enum(["FLEX", "FIXED", "HUG"]), value: z.number().min(0).optional() })
+    )
+    .optional()
+    .describe(
+      "GRID: per-column track sizes (like CSS grid-template-columns). Length sets the column count."
+    ),
   layoutWrap: z
     .enum(["NO_WRAP", "WRAP"])
     .optional()
@@ -693,6 +857,45 @@ export const setTextPropertiesShape = z.object({
     .enum(["AUTO", "BALANCE", "PRETTY"])
     .optional()
     .describe("Line breaking: BALANCE evens line lengths, PRETTY avoids orphans (CSS text-wrap)"),
+  textCase: z
+    .enum(["ORIGINAL", "UPPER", "LOWER", "TITLE", "SMALL_CAPS", "SMALL_CAPS_FORCED"])
+    .optional(),
+  textDecoration: z.enum(["NONE", "UNDERLINE", "STRIKETHROUGH"]).optional(),
+  textDecorationStyle: z
+    .enum(["SOLID", "WAVY", "DOTTED"])
+    .optional()
+    .describe("Requires textDecoration UNDERLINE"),
+  paragraphSpacing: z.number().min(0).optional().describe("Space between paragraphs (px)"),
+  paragraphIndent: z.number().min(0).optional().describe("First-line indent (px)"),
+  listType: z
+    .enum(["ORDERED", "UNORDERED", "NONE"])
+    .optional()
+    .describe("Turn the whole text into a numbered / bulleted list, or back to plain text"),
+  listSpacing: z.number().min(0).optional().describe("Space between list items (px)"),
+  leadingTrim: z
+    .enum(["NONE", "CAP_HEIGHT"])
+    .optional()
+    .describe("CAP_HEIGHT trims space above caps / below baseline (CSS text-box-trim)"),
+  textTruncation: z
+    .enum(["DISABLED", "ENDING"])
+    .optional()
+    .describe("ENDING truncates overflowing text with an ellipsis"),
+  maxLines: z
+    .number()
+    .int()
+    .min(1)
+    .nullable()
+    .optional()
+    .describe("With textTruncation ENDING: max lines before the ellipsis; null clears"),
+  lineHeightPercent: z.number().positive().optional().describe("Line height in % of font size"),
+  lineHeightAuto: z.literal(true).optional().describe("Reset line height to Auto"),
+  letterSpacingPercent: z.number().optional().describe("Letter spacing in % of font size"),
+  hyperlink: z
+    .string()
+    .url()
+    .nullable()
+    .optional()
+    .describe("Link the whole text to a URL; null removes the link"),
   lineHeightPx: z.number().positive().optional().describe("Optional line height in pixels"),
   letterSpacingPx: z.number().optional().describe("Optional letter spacing in pixels"),
   fillHex: createHexColorSchema().optional().describe("Optional text fill color as hex"),
@@ -710,25 +913,7 @@ export const setTextPropertiesShape = z.object({
 });
 
 export const setTextPropertiesInput = setTextPropertiesShape
-  .refine(
-    (value) =>
-      value.fontFamily !== undefined ||
-      value.fontStyle !== undefined ||
-      value.fontSize !== undefined ||
-      value.textAlignHorizontal !== undefined ||
-      value.textAlignVertical !== undefined ||
-      value.textAutoResize !== undefined ||
-      value.textWrapStyle !== undefined ||
-      value.lineHeightPx !== undefined ||
-      value.letterSpacingPx !== undefined ||
-      value.fillHex !== undefined ||
-      value.fillOpacity !== undefined ||
-      value.x !== undefined ||
-      value.y !== undefined ||
-      value.width !== undefined ||
-      value.height !== undefined,
-    "At least one text property must be provided"
-  )
+  .refine(hasAnyProperty("nodeId", "fileKey"), "At least one text property must be provided")
   .refine(
     (value) => value.fillOpacity === undefined || value.fillHex !== undefined,
     "fillHex is required when fillOpacity is provided"
@@ -1457,29 +1642,12 @@ export const toolInputSchemas = {
   set_effects: setEffectsInput,
 
   set_stroke_properties: setStrokePropertiesInput.refine(
-    (value) =>
-      value.strokeWeight !== undefined ||
-      value.strokeAlign !== undefined ||
-      value.dashPattern !== undefined ||
-      value.strokeCap !== undefined ||
-      value.strokeJoin !== undefined,
+    hasAnyProperty("nodeId", "fileKey"),
     "At least one stroke property must be provided"
   ),
 
   set_auto_layout: setAutoLayoutInput.refine(
-    (value) =>
-      value.layoutMode !== undefined ||
-      value.itemSpacing !== undefined ||
-      value.counterAxisSpacing !== undefined ||
-      value.paddingTop !== undefined ||
-      value.paddingRight !== undefined ||
-      value.paddingBottom !== undefined ||
-      value.paddingLeft !== undefined ||
-      value.primaryAxisAlignItems !== undefined ||
-      value.counterAxisAlignItems !== undefined ||
-      value.primaryAxisSizingMode !== undefined ||
-      value.counterAxisSizingMode !== undefined ||
-      value.layoutWrap !== undefined,
+    hasAnyProperty("nodeId", "fileKey"),
     "At least one auto-layout property must be provided"
   ),
 

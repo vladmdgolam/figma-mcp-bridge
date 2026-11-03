@@ -36,13 +36,20 @@ type SerializedShadowEffect = {
 type SerializedBlurEffect = {
   type: "LAYER_BLUR" | "BACKGROUND_BLUR";
   radius: number;
+  blurType?: "PROGRESSIVE";
+  startRadius?: number;
+  startOffset?: { x: number; y: number };
+  endOffset?: { x: number; y: number };
 };
 
-type SerializedEffect = SerializedShadowEffect | SerializedBlurEffect;
+/** NOISE / TEXTURE / GLASS: their own fields, colors as hex. */
+type SerializedOtherEffect = { type: "NOISE" | "TEXTURE" | "GLASS"; [key: string]: unknown };
+
+type SerializedEffect = SerializedShadowEffect | SerializedBlurEffect | SerializedOtherEffect;
 
 // --- Serialized auto-layout ---
 type SerializedAutoLayout = {
-  direction: "HORIZONTAL" | "VERTICAL";
+  direction: "HORIZONTAL" | "VERTICAL" | "GRID";
   gap: number;
   primaryAxisAlign: string;
   counterAxisAlign: string;
@@ -50,6 +57,17 @@ type SerializedAutoLayout = {
   counterAxisSizing: string;
   wrap?: string;
   counterAxisSpacing?: number;
+  counterAxisAlignContent?: string;
+  itemReverseZIndex?: boolean;
+  strokesIncludedInLayout?: boolean;
+  grid?: {
+    rows: number;
+    columns: number;
+    rowGap: number;
+    columnGap: number;
+    rowSizes: Array<{ type: string; value?: number }>;
+    columnSizes: Array<{ type: string; value?: number }>;
+  };
 };
 
 // --- Serialized styles ---
@@ -76,6 +94,16 @@ type SerializedStyles = {
   clipsContent?: boolean;
   rotation?: number;
   constraints?: { horizontal: string; vertical: string };
+  /** How this node sizes inside / as an auto-layout frame (omitted when both FIXED). */
+  layoutSizing?: { horizontal: string; vertical: string };
+  layoutPositioning?: "ABSOLUTE";
+  sizeLimits?: { minWidth?: number; maxWidth?: number; minHeight?: number; maxHeight?: number };
+  gridChild?: { row: number; column: number; rowSpan: number; columnSpan: number };
+  locked?: boolean;
+  isMask?: boolean;
+  maskType?: string;
+  /** Text-only extras, present when not at their defaults. */
+  text?: Record<string, unknown>;
 };
 
 type SerializedBounds = {
@@ -180,7 +208,59 @@ const serializeEffects = (effects: readonly Effect[]): SerializedEffect[] =>
           ];
         case "LAYER_BLUR":
         case "BACKGROUND_BLUR":
+          if ("blurType" in effect && effect.blurType === "PROGRESSIVE") {
+            return [
+              {
+                type: effect.type,
+                radius: effect.radius,
+                blurType: "PROGRESSIVE",
+                startRadius: effect.startRadius,
+                startOffset: effect.startOffset,
+                endOffset: effect.endOffset,
+              },
+            ];
+          }
           return [{ type: effect.type, radius: effect.radius }];
+        case "NOISE":
+          return [
+            {
+              type: "NOISE",
+              noiseType: effect.noiseType,
+              color: toHex(effect.color),
+              colorOpacity: effect.color.a,
+              ...(effect.noiseType === "DUOTONE"
+                ? {
+                    secondaryColor: toHex(effect.secondaryColor),
+                    secondaryColorOpacity: effect.secondaryColor.a,
+                  }
+                : {}),
+              ...(effect.noiseType === "MULTITONE" ? { opacity: effect.opacity } : {}),
+              noiseSize: effect.noiseSize,
+              density: effect.density,
+              blendMode: effect.blendMode,
+            },
+          ];
+        case "TEXTURE":
+          return [
+            {
+              type: "TEXTURE",
+              noiseSize: effect.noiseSize,
+              radius: effect.radius,
+              clipToShape: effect.clipToShape,
+            },
+          ];
+        case "GLASS":
+          return [
+            {
+              type: "GLASS",
+              lightIntensity: effect.lightIntensity,
+              lightAngle: effect.lightAngle,
+              refraction: effect.refraction,
+              depth: effect.depth,
+              dispersion: effect.dispersion,
+              radius: effect.radius,
+            },
+          ];
         default:
           return [];
       }
@@ -236,8 +316,74 @@ const serializeText = (node: TextNode, base: SerializedNode) => {
       textAlignHorizontal: isMixed(node.textAlignHorizontal) ? "mixed" : node.textAlignHorizontal,
       textAlignVertical: isMixed(node.textAlignVertical) ? "mixed" : node.textAlignVertical,
       textAutoResize: node.textAutoResize,
+      ...textExtras(node),
     },
   };
+};
+
+/** Non-default text settings that the base text fields don't cover. */
+const textExtras = (node: TextNode): { text?: Record<string, unknown> } => {
+  const out: Record<string, unknown> = {};
+  const pick = (key: string, value: unknown, isDefault: (v: unknown) => boolean) => {
+    if (isMixed(value)) out[key] = "mixed";
+    else if (value !== undefined && value !== null && !isDefault(value)) out[key] = value;
+  };
+  pick("textCase", node.textCase, (v) => v === "ORIGINAL");
+  pick("textDecorationStyle", node.textDecorationStyle, (v) => v === "SOLID");
+  pick("paragraphSpacing", node.paragraphSpacing, (v) => v === 0);
+  pick("paragraphIndent", node.paragraphIndent, (v) => v === 0);
+  pick("listSpacing", node.listSpacing, (v) => v === 0);
+  pick("leadingTrim", node.leadingTrim, (v) => v === "NONE");
+  pick("textTruncation", node.textTruncation, (v) => v === "DISABLED");
+  pick("maxLines", node.maxLines, () => false);
+  pick("textWrapStyle", node.textWrapStyle, (v) => v === "AUTO");
+  pick("hyperlink", node.hyperlink, () => false);
+  if (node.characters.length > 0) {
+    const lists = node.getStyledTextSegments(["listOptions"]);
+    const types = new Set(lists.map((seg) => seg.listOptions.type));
+    types.delete("NONE");
+    if (types.size) out.listTypes = [...types];
+  }
+  return Object.keys(out).length ? { text: out } : {};
+};
+
+/** Auto-layout child sizing, absolute positioning, size limits, grid cell, lock and mask flags. */
+const serializeLayoutChild = (node: SerializableNode, styles: SerializedStyles): void => {
+  const n = node as SceneNode & Partial<FrameNode>;
+  if ("layoutSizingHorizontal" in n && "layoutSizingVertical" in n) {
+    try {
+      const h = n.layoutSizingHorizontal as string;
+      const v = n.layoutSizingVertical as string;
+      if (h !== "FIXED" || v !== "FIXED") styles.layoutSizing = { horizontal: h, vertical: v };
+    } catch {
+      // Throws on nodes outside an auto-layout context in some editor builds.
+    }
+  }
+  if (n.layoutPositioning === "ABSOLUTE") styles.layoutPositioning = "ABSOLUTE";
+  const limits: NonNullable<SerializedStyles["sizeLimits"]> = {};
+  for (const key of ["minWidth", "maxWidth", "minHeight", "maxHeight"] as const) {
+    const value = n[key];
+    if (typeof value === "number") limits[key] = value;
+  }
+  if (Object.keys(limits).length) styles.sizeLimits = limits;
+  if (
+    n.parent &&
+    "layoutMode" in n.parent &&
+    n.parent.layoutMode === "GRID" &&
+    "gridRowSpan" in n
+  ) {
+    styles.gridChild = {
+      row: n.gridRowAnchorIndex as number,
+      column: n.gridColumnAnchorIndex as number,
+      rowSpan: n.gridRowSpan as number,
+      columnSpan: n.gridColumnSpan as number,
+    };
+  }
+  if (n.locked) styles.locked = true;
+  if ("isMask" in n && n.isMask) {
+    styles.isMask = true;
+    styles.maskType = n.maskType;
+  }
 };
 
 const serializeStyles = (node: SerializableNode): SerializedStyles => {
@@ -317,8 +463,26 @@ const serializeStyles = (node: SerializableNode): SerializedStyles => {
         counterAxisSpacing:
           "counterAxisSpacing" in node ? (node.counterAxisSpacing as number) : undefined,
       };
+      const frame = node as FrameNode;
+      const al = styles.autoLayout;
+      if (frame.counterAxisAlignContent === "SPACE_BETWEEN")
+        al.counterAxisAlignContent = "SPACE_BETWEEN";
+      if (frame.itemReverseZIndex) al.itemReverseZIndex = true;
+      if (frame.strokesIncludedInLayout) al.strokesIncludedInLayout = true;
+      if (mode === "GRID") {
+        al.grid = {
+          rows: frame.gridRowCount,
+          columns: frame.gridColumnCount,
+          rowGap: frame.gridRowGap,
+          columnGap: frame.gridColumnGap,
+          rowSizes: frame.gridRowSizes.map((t) => ({ type: t.type, value: t.value })),
+          columnSizes: frame.gridColumnSizes.map((t) => ({ type: t.type, value: t.value })),
+        };
+      }
     }
   }
+
+  serializeLayoutChild(node, styles);
 
   if ("paddingLeft" in node) {
     const top = node.paddingTop as number;
@@ -371,10 +535,7 @@ export type SerializableNode = SceneNode | PageNode;
  * @param depth - Levels of children to serialize fully. Default Infinity.
  * @returns The serialized node.
  */
-export const serializeNode = (
-  node: SerializableNode,
-  depth: number = Infinity
-): SerializedNode => {
+export const serializeNode = (node: SerializableNode, depth: number = Infinity): SerializedNode => {
   const base: SerializedNode = {
     id: node.id,
     name: node.name,
@@ -401,9 +562,7 @@ export const serializeNode = (
   }
 
   if ("children" in node) {
-    const visibleChildren = node.children.filter(
-      (child) => child.visible !== false
-    );
+    const visibleChildren = node.children.filter((child) => child.visible !== false);
 
     if (depth <= 0) {
       return {

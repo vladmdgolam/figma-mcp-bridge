@@ -633,7 +633,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "set_text_properties",
-    "Patch common text properties such as font family/style, size, line height, letter spacing, and fill color, plus alignment, auto-resize, and bounds on TEXT nodes. Also targets FigJam STICKY and SHAPE_WITH_TEXT text sublayers (alignment/auto-resize are TEXT-only). When multiple files are connected, specify fileKey.",
+    "Patch text properties: font family/style, size, line height (px, %, or auto), letter spacing (px or %), fill color, case, underline/strikethrough (+ wavy/dotted), paragraph spacing/indent, bullet/numbered lists, leading trim, truncation with max lines, text-wrap balance/pretty, and a hyperlink, plus alignment, auto-resize, and bounds on TEXT nodes. Applies to the whole text. Also targets FigJam STICKY and SHAPE_WITH_TEXT text sublayers (alignment/auto-resize are TEXT-only). When multiple files are connected, specify fileKey.",
     setTextPropertiesShape.shape,
     async (args): Promise<ToolResult> => {
       const parsed = parseToolInput(setTextPropertiesInput, args);
@@ -647,7 +647,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "set_node_properties",
-    "Patch common node properties such as name, position, size, visibility, opacity, and corner radius. Accepts either a single nodeId or a nodeIds array to apply the same changes to multiple nodes in one call. Only supported properties for the target node type may be changed. Use set_solid_fill or set_gradient_fill to change paints. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
+    "Patch node properties: name, position, size, visibility, opacity, rotation, corner radius (uniform or per-corner, plus corner smoothing), blend mode, lock, clip content, constraints, mask, and auto-layout child settings (layoutSizingHorizontal/Vertical FIXED/HUG/FILL, ABSOLUTE positioning, min/max width/height, grid span/alignment/cell). Accepts either a single nodeId or a nodeIds array to apply the same changes to multiple nodes in one call. Only supported properties for the target node type may be changed. Use set_solid_fill or set_gradient_fill to change paints. Works in both Figma and FigJam. When multiple files are connected, specify fileKey.",
     setNodePropertiesShape.shape,
     async (args): Promise<ToolResult> => {
       const parsed = parseToolInput(toolInputSchemas.set_node_properties, args);
@@ -685,7 +685,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "set_effects",
-    "Replace a node's effects list (drop/inner shadows, layer/background blurs). Pass an empty array to clear all effects. Each entry mirrors the shape returned by get_node's `effects` field.",
+    "Replace a node's effects list (drop/inner shadows, layer/background blurs incl. progressive blur, NOISE, TEXTURE and GLASS). Pass an empty array to clear all effects. Each entry mirrors the shape returned by get_node's `effects` field.",
     setEffectsShape.shape,
     async (args): Promise<ToolResult> => {
       const parsed = parseToolInput(setEffectsInput, args);
@@ -697,7 +697,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "set_stroke_properties",
-    "Patch stroke geometry properties: weight, align, dash pattern, cap, join. Use set_solid_fill/set_gradient_fill with target='stroke' to set the paint itself.",
+    "Patch stroke geometry properties: weight (uniform or per side), align, dash pattern, cap, join, miter limit. Use set_solid_fill/set_gradient_fill with target='stroke' to set the paint itself.",
     setStrokePropertiesInput.shape,
     async (args): Promise<ToolResult> => {
       const parsed = parseToolInput(toolInputSchemas.set_stroke_properties, args);
@@ -711,7 +711,7 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "set_auto_layout",
-    "Configure auto-layout on a frame: direction, gap, padding, alignment, sizing modes, wrap. Set layoutMode='NONE' to disable auto-layout on the frame. Not supported on SECTION nodes (Figma's API has no section auto-layout).",
+    "Configure auto-layout on a frame: direction (HORIZONTAL / VERTICAL / GRID), gap, padding, alignment (incl. SPACE_EVENLY / SPACE_AROUND), sizing modes, wrap (both directions) and wrapped-content alignment, z-order, strokes-in-layout, and for GRID the row/column counts, gaps and track sizes (FLEX / FIXED / HUG, like CSS grid-template). Children's FILL/HUG sizing, absolute positioning, min/max and grid placement are set with set_node_properties. Set layoutMode='NONE' to disable auto-layout on the frame. Not supported on SECTION nodes (Figma's API has no section auto-layout).",
     setAutoLayoutInput.shape,
     async (args): Promise<ToolResult> => {
       const parsed = parseToolInput(toolInputSchemas.set_auto_layout, args);
