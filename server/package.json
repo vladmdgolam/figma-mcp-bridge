@@ -1,6 +1,6 @@
 {
   "name": "@vladik.xyz/figma-mcp-bridge",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "MCP server that bridges Figma plugin data to AI tools without hitting API rate limits — fork adding field projection, disk-by-default screenshots, tree search and image-fill export",
   "type": "module",
   "bin": {
