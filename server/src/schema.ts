@@ -1685,6 +1685,30 @@ export const deleteStylesInput = z.object({
   fileKey: fileKeyField,
 });
 
+/** Opt-in per-run text styling, shared by get_node and get_selection. */
+const textSegmentFields = {
+  textSegments: z
+    .boolean()
+    .optional()
+    .describe(
+      "TEXT nodes with mixed styling report only 'mixed' (e.g. styles.textDecoration: 'mixed', styles.text.hyperlink: 'mixed'). Set true to also get `textSegments`: one entry per run of identically styled characters, { start, end, characters, ...style }, in text order (start/end index into `characters`). Style keys are present only when set: fontFamily, fontStyle, fontWeight, fontSize, textDecoration (UNDERLINE/STRIKETHROUGH) plus textDecorationStyle/Offset/Thickness/Color/SkipInk, textCase, letterSpacing, lineHeight, fills, hyperlink {type,value}, list, indentation, textStyleId, fillStyleId. Use it to find which characters are underlined, linked, bold or recolored. Also adds `textSegmentCount`."
+    ),
+  textSegmentsOnlyDiffering: z
+    .boolean()
+    .optional()
+    .describe(
+      "With textSegments. Return only the runs that differ from the node's dominant style (by character count), each carrying just the keys that differ (null = the baseline value is unset on that run), plus `textSegmentsBaseline` with the dominant style. Best for long texts with a few underlined/linked fragments."
+    ),
+  maxSegmentChars: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "With textSegments. Max characters of text echoed per run (default 60; longer runs are cut with '…' and marked charactersTruncated). 0 omits `characters`; pass a large number for full text."
+    ),
+};
+
 export const toolInputSchemas = {
   get_document: z.object({
     depth: z
@@ -1707,6 +1731,7 @@ export const toolInputSchemas = {
       .describe(
         "How many levels of children to serialize fully (default 2). Deeper levels are returned as {id,name,type} stubs with a childCount."
       ),
+    ...textSegmentFields,
     fileKey: fileKeyField,
   }),
 
@@ -1740,6 +1765,7 @@ export const toolInputSchemas = {
       .describe(
         "When true, adds a `prototype` field with the reactions on this node and its descendants (the scan get_prototype_connections returns). Not available in FigJam."
       ),
+    ...textSegmentFields,
     fileKey: fileKeyField,
   }),
 

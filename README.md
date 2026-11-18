@@ -79,6 +79,7 @@ If you want to know more about how it works, read the [How it works](#how-it-wor
 Everything upstream does, plus a set of changes aimed at keeping an agent's context small and its workflows atomic:
 
 - **`get_node({ fields })` — server-side projection.** Pass dot-paths like `['bounds', 'styles.fills', 'children.styles.fills']`; the server prunes everything else, recursing into arrays and always keeping `id`/`name`/`type`. Takes ~300 KB node payloads down to ~5 KB.
+- **`get_node({ textSegments })` — per-character text styles.** A TEXT node with mixed styling otherwise reports only `"textDecoration": "mixed"` / `"hyperlink": "mixed"`. `textSegments: true` (also on `get_selection`) adds `textSegments`, one `{ start, end, characters, ...style }` per run of identically styled characters, built on `getStyledTextSegments`. Style keys are present only when set: `fontFamily`, `fontStyle`, `fontWeight`, `fontSize`, `textDecoration` (+ style/offset/thickness/color/skipInk), `textCase`, `letterSpacing`, `lineHeight`, `fills`, `hyperlink {type,value}`, `list`, `indentation`, `textStyleId`, `fillStyleId`. For long texts add `textSegmentsOnlyDiffering: true` to get only the runs that differ from the dominant style, each with just its differing keys (`null` = unset), plus `textSegmentsBaseline`; `maxSegmentChars` caps the text echoed per run (default 60, `0` = none). Needs a rebuilt/reloaded plugin.
 - **`depth` is honored everywhere, and truncation happens during serialization.** `get_node`'s `depth` was previously accepted and ignored, so every call returned the whole subtree no matter what the description promised; `get_design_context` serialized the full tree and then threw the excess away. Both now stop at the limit, and `get_document`/`get_selection` default to depth 2 instead of unbounded. Truncated levels carry `childCount` and `truncated: true`.
 - **Node IDs accept the hyphen form.** `4029-12345` (what Figma URLs and exported filenames use) is normalised to `4029:12345` instead of failing a regex check.
 - **`find_nodes` tolerates inline regex flags.** A leading `(?i)` — Python syntax that JavaScript rejects as an invalid group — is lifted onto the RegExp flags.
@@ -97,88 +98,88 @@ The plugin UI is also de-branded and collapsed to a single line (connection dot 
 
 🔱 marks tools and behaviors added by this fork.
 
-| Tool | Description |
-|------|-------------|
-| `list_files` | List all connected Figma files (supports multi-file workflows) |
-| `get_document` | Get the current Figma page tree. 🔱 Depth-limited (default 2); deeper nodes come back as `{id,name,type}` stubs with a `childCount` |
-| `get_selection` | Get the currently selected nodes in Figma. 🔱 Depth-limited (default 2), same stub behavior as `get_document` |
-| `get_node` | Get a specific Figma node by ID (colon format, e.g. `4029:12345`). Pass `fields` to project only the paths you need — see [fork additions](#what-this-fork-adds) |
-| `get_layout_tree` | Read absolute transforms and layout bounds for every node under a capture root |
-| `get_prototype_connections` | Read prototype interactions on a node and its descendants |
-| `trace_prototype_flow` | Trace prototype navigation between screens |
-| `find_nodes` | 🔱 Search the tree by name substring, regex, and/or node type; returns lightweight rows |
-| `get_node_by_path` | 🔱 Resolve a slash-separated chain of child names (`'Hero/Card/Title'`) to a node |
-| `get_styles` | Get all local paint, text, effect, and grid styles |
-| `get_metadata` | Get file name, pages, and current page info |
-| `get_design_context` | Selection if there is one, else the current page, depth-limited (default 2). The right first call in a design-to-code task |
-| `get_variable_defs` | Get all variable collections, modes, and values (design tokens) |
-| `get_screenshot` | Export nodes as PNG/SVG/JPG/PDF/WEBP. 🔱 Writes to a temp file and returns the path by default (pass `inline: true` for base64); 🔱 `isolate: true` hides siblings for a clean capture; 🔱 WEBP is re-encoded server-side from a PNG export (needs `cwebp` on PATH) |
-| `save_screenshots` | Export and save screenshots directly to the local filesystem |
-| `image_fill_export` | 🔱 Resolve an `imageHash` from an IMAGE paint to the actual PNG bytes |
-| `save_children_json` | 🔱 Serialize every direct visible child of a parent to its own JSON file |
-| `get_motion_styles` | List all available animation presets (beta) |
-| `get_node_motion` | Read a node's current animation styles and properties (beta) |
-| `apply_animation_style` | Apply a preset animation style to a node (beta) |
-| `remove_animation_style` | Remove an applied animation style from a node (beta) |
-| `apply_manual_keyframe_track` | Apply a manual keyframe track to a node property (beta) |
-| `remove_manual_keyframe_track` | Remove a manual keyframe track from a node property (beta) |
-| `set_timeline_duration` | Set the duration of a timeline in seconds (beta) |
-| `set_node_visibility` | Show or hide specific nodes |
-| `set_text_content` | Replace the contents of a text node (TEXT, FigJam sticky, or shape label) |
-| `set_text_properties` | Patch font, size, alignment, auto-resize, color, and bounds on text nodes/sublayers |
-| `set_node_properties` | Patch common node properties: name, position, size, visibility, opacity, corner radius (single or batch) |
-| `set_solid_fill` | Replace a node's fill or stroke with a single solid paint |
-| `set_gradient_fill` | Replace a node's fill or stroke with a linear/radial/angular/diamond gradient |
-| `set_effects` | Replace a node's effects list (drop/inner shadows, layer/background blurs) |
-| `set_stroke_properties` | Patch stroke weight, align, dash pattern, cap, and join |
-| `set_auto_layout` | Configure auto-layout direction, padding, gap, alignment, sizing, and wrap (not sections) |
-| `create_page` | Create a new page in the document, optionally switching to it |
-| `create_frame` | Create a new frame, optionally under a parent |
-| `create_section` | Create a section — a named, resizable container (Figma and FigJam) |
-| `create_text` | Create a new text node |
-| `create_shape` | Create a rectangle, ellipse, or line |
-| `create_shape_with_text` | Create a FigJam shape with its own text label (SHAPE_WITH_TEXT), incl. text fill |
-| `create_image` | Create an image-backed rectangle from a local path, URL, or data URI |
-| `create_svg` | Import raw SVG markup or a workspace-local SVG file as editable vector layers |
-| `create_sticky` | Create a sticky note in FigJam |
-| `create_connector` | Create a connector between two nodes in FigJam, with attachment anchors |
-| `import_html_layers` | Bulk-import an html-figma layer tree (JSON) as frames, text, rectangles, and vectors |
-| `duplicate_nodes` | Duplicate nodes in place |
-| `duplicate_with_offset` | Duplicate nodes and move each duplicate by a fixed offset |
-| `fit_to_content` | Resize a SECTION around its children with optional padding |
-| `distribute_horizontally` | Space 3+ nodes with equal horizontal gaps (first/last stay fixed) |
-| `distribute_vertically` | Space 3+ nodes with equal vertical gaps (first/last stay fixed) |
-| `align_to_grid` | Snap node positions to a grid of the given size |
-| `place_below` | Move a node below another with gap and start/center alignment |
-| `place_right_of` | Move a node to the right of another with gap and start/center alignment |
-| `reparent_nodes` | Move nodes into another parent |
-| `group_nodes` | Wrap a list of nodes (sharing a parent) in a new group |
-| `ungroup_node` | Ungroup a group or frame — children move up to its parent |
-| `set_selection` | Set the page selection to a list of node IDs (works in Dev Mode) |
-| `scroll_and_zoom_into_view` | Frame the viewport around the given nodes (works in Dev Mode) |
-| `delete_nodes` | Delete nodes with explicit confirmation |
-| `get_css` | Figma's Dev Mode CSS for nodes as a property→value map |
-| `get_components` | List local components / component sets (page or document) with keys and property summaries |
-| `get_component_info` | Property definitions, variants, bound layers, instances; for an instance: main component, values, overrides |
-| `create_component` | New empty component, or convert existing layers into components in place |
-| `combine_as_variants` | Combine components into a component set |
-| `edit_component` | Rename/describe, set a variant's values, add/edit/delete component properties (with layer binding) |
-| `bind_component_property` | Bind layers to BOOLEAN / TEXT / INSTANCE_SWAP properties; expose nested instances |
-| `create_instance` | Insert an instance of a local or library component, picking variant and property values |
-| `set_instance_properties` | Set variant / text / boolean / instance-swap values on instances |
-| `swap_instance` | Swap instances to another component, keeping or clearing overrides |
-| `detach_instances` | Detach instances into frames |
-| `reset_instance_overrides` | Clear direct overrides on instances |
-| `create_variable_collection` | Create a variable collection with named modes |
-| `edit_variable_collection` | Rename a collection; add / rename / remove modes |
-| `upsert_variables` | Create or update many variables at once: per-mode values, aliases, scopes, code syntax |
-| `delete_variables` | Delete variables or whole collections (with confirmation) |
-| `bind_variables` | Bind layer size, spacing, radii, text, fill/stroke colors and effects to variables |
-| `set_variable_mode` | Pin a collection mode (e.g. Dark) on layers |
-| `create_style` | Create a paint / text / effect / grid style from values or by copying a layer |
-| `edit_style` | Change a local style's name, description or values |
-| `apply_style` | Link layers to styles by slot (fill, stroke, text, effect, grid) or detach |
-| `delete_styles` | Delete local styles (with confirmation) |
+| Tool                           | Description                                                                                                                                                                                                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `list_files`                   | List all connected Figma files (supports multi-file workflows)                                                                                                                                                                                                      |
+| `get_document`                 | Get the current Figma page tree. 🔱 Depth-limited (default 2); deeper nodes come back as `{id,name,type}` stubs with a `childCount`                                                                                                                                 |
+| `get_selection`                | Get the currently selected nodes in Figma. 🔱 Depth-limited (default 2), same stub behavior as `get_document`                                                                                                                                                       |
+| `get_node`                     | Get a specific Figma node by ID (colon format, e.g. `4029:12345`). Pass `fields` to project only the paths you need, or `textSegments` for per-run text styles — see [fork additions](#what-this-fork-adds)                                                         |
+| `get_layout_tree`              | Read absolute transforms and layout bounds for every node under a capture root                                                                                                                                                                                      |
+| `get_prototype_connections`    | Read prototype interactions on a node and its descendants                                                                                                                                                                                                           |
+| `trace_prototype_flow`         | Trace prototype navigation between screens                                                                                                                                                                                                                          |
+| `find_nodes`                   | 🔱 Search the tree by name substring, regex, and/or node type; returns lightweight rows                                                                                                                                                                             |
+| `get_node_by_path`             | 🔱 Resolve a slash-separated chain of child names (`'Hero/Card/Title'`) to a node                                                                                                                                                                                   |
+| `get_styles`                   | Get all local paint, text, effect, and grid styles                                                                                                                                                                                                                  |
+| `get_metadata`                 | Get file name, pages, and current page info                                                                                                                                                                                                                         |
+| `get_design_context`           | Selection if there is one, else the current page, depth-limited (default 2). The right first call in a design-to-code task                                                                                                                                          |
+| `get_variable_defs`            | Get all variable collections, modes, and values (design tokens)                                                                                                                                                                                                     |
+| `get_screenshot`               | Export nodes as PNG/SVG/JPG/PDF/WEBP. 🔱 Writes to a temp file and returns the path by default (pass `inline: true` for base64); 🔱 `isolate: true` hides siblings for a clean capture; 🔱 WEBP is re-encoded server-side from a PNG export (needs `cwebp` on PATH) |
+| `save_screenshots`             | Export and save screenshots directly to the local filesystem                                                                                                                                                                                                        |
+| `image_fill_export`            | 🔱 Resolve an `imageHash` from an IMAGE paint to the actual PNG bytes                                                                                                                                                                                               |
+| `save_children_json`           | 🔱 Serialize every direct visible child of a parent to its own JSON file                                                                                                                                                                                            |
+| `get_motion_styles`            | List all available animation presets (beta)                                                                                                                                                                                                                         |
+| `get_node_motion`              | Read a node's current animation styles and properties (beta)                                                                                                                                                                                                        |
+| `apply_animation_style`        | Apply a preset animation style to a node (beta)                                                                                                                                                                                                                     |
+| `remove_animation_style`       | Remove an applied animation style from a node (beta)                                                                                                                                                                                                                |
+| `apply_manual_keyframe_track`  | Apply a manual keyframe track to a node property (beta)                                                                                                                                                                                                             |
+| `remove_manual_keyframe_track` | Remove a manual keyframe track from a node property (beta)                                                                                                                                                                                                          |
+| `set_timeline_duration`        | Set the duration of a timeline in seconds (beta)                                                                                                                                                                                                                    |
+| `set_node_visibility`          | Show or hide specific nodes                                                                                                                                                                                                                                         |
+| `set_text_content`             | Replace the contents of a text node (TEXT, FigJam sticky, or shape label)                                                                                                                                                                                           |
+| `set_text_properties`          | Patch font, size, alignment, auto-resize, color, and bounds on text nodes/sublayers                                                                                                                                                                                 |
+| `set_node_properties`          | Patch common node properties: name, position, size, visibility, opacity, corner radius (single or batch)                                                                                                                                                            |
+| `set_solid_fill`               | Replace a node's fill or stroke with a single solid paint                                                                                                                                                                                                           |
+| `set_gradient_fill`            | Replace a node's fill or stroke with a linear/radial/angular/diamond gradient                                                                                                                                                                                       |
+| `set_effects`                  | Replace a node's effects list (drop/inner shadows, layer/background blurs)                                                                                                                                                                                          |
+| `set_stroke_properties`        | Patch stroke weight, align, dash pattern, cap, and join                                                                                                                                                                                                             |
+| `set_auto_layout`              | Configure auto-layout direction, padding, gap, alignment, sizing, and wrap (not sections)                                                                                                                                                                           |
+| `create_page`                  | Create a new page in the document, optionally switching to it                                                                                                                                                                                                       |
+| `create_frame`                 | Create a new frame, optionally under a parent                                                                                                                                                                                                                       |
+| `create_section`               | Create a section — a named, resizable container (Figma and FigJam)                                                                                                                                                                                                  |
+| `create_text`                  | Create a new text node                                                                                                                                                                                                                                              |
+| `create_shape`                 | Create a rectangle, ellipse, or line                                                                                                                                                                                                                                |
+| `create_shape_with_text`       | Create a FigJam shape with its own text label (SHAPE_WITH_TEXT), incl. text fill                                                                                                                                                                                    |
+| `create_image`                 | Create an image-backed rectangle from a local path, URL, or data URI                                                                                                                                                                                                |
+| `create_svg`                   | Import raw SVG markup or a workspace-local SVG file as editable vector layers                                                                                                                                                                                       |
+| `create_sticky`                | Create a sticky note in FigJam                                                                                                                                                                                                                                      |
+| `create_connector`             | Create a connector between two nodes in FigJam, with attachment anchors                                                                                                                                                                                             |
+| `import_html_layers`           | Bulk-import an html-figma layer tree (JSON) as frames, text, rectangles, and vectors                                                                                                                                                                                |
+| `duplicate_nodes`              | Duplicate nodes in place                                                                                                                                                                                                                                            |
+| `duplicate_with_offset`        | Duplicate nodes and move each duplicate by a fixed offset                                                                                                                                                                                                           |
+| `fit_to_content`               | Resize a SECTION around its children with optional padding                                                                                                                                                                                                          |
+| `distribute_horizontally`      | Space 3+ nodes with equal horizontal gaps (first/last stay fixed)                                                                                                                                                                                                   |
+| `distribute_vertically`        | Space 3+ nodes with equal vertical gaps (first/last stay fixed)                                                                                                                                                                                                     |
+| `align_to_grid`                | Snap node positions to a grid of the given size                                                                                                                                                                                                                     |
+| `place_below`                  | Move a node below another with gap and start/center alignment                                                                                                                                                                                                       |
+| `place_right_of`               | Move a node to the right of another with gap and start/center alignment                                                                                                                                                                                             |
+| `reparent_nodes`               | Move nodes into another parent                                                                                                                                                                                                                                      |
+| `group_nodes`                  | Wrap a list of nodes (sharing a parent) in a new group                                                                                                                                                                                                              |
+| `ungroup_node`                 | Ungroup a group or frame — children move up to its parent                                                                                                                                                                                                           |
+| `set_selection`                | Set the page selection to a list of node IDs (works in Dev Mode)                                                                                                                                                                                                    |
+| `scroll_and_zoom_into_view`    | Frame the viewport around the given nodes (works in Dev Mode)                                                                                                                                                                                                       |
+| `delete_nodes`                 | Delete nodes with explicit confirmation                                                                                                                                                                                                                             |
+| `get_css`                      | Figma's Dev Mode CSS for nodes as a property→value map                                                                                                                                                                                                              |
+| `get_components`               | List local components / component sets (page or document) with keys and property summaries                                                                                                                                                                          |
+| `get_component_info`           | Property definitions, variants, bound layers, instances; for an instance: main component, values, overrides                                                                                                                                                         |
+| `create_component`             | New empty component, or convert existing layers into components in place                                                                                                                                                                                            |
+| `combine_as_variants`          | Combine components into a component set                                                                                                                                                                                                                             |
+| `edit_component`               | Rename/describe, set a variant's values, add/edit/delete component properties (with layer binding)                                                                                                                                                                  |
+| `bind_component_property`      | Bind layers to BOOLEAN / TEXT / INSTANCE_SWAP properties; expose nested instances                                                                                                                                                                                   |
+| `create_instance`              | Insert an instance of a local or library component, picking variant and property values                                                                                                                                                                             |
+| `set_instance_properties`      | Set variant / text / boolean / instance-swap values on instances                                                                                                                                                                                                    |
+| `swap_instance`                | Swap instances to another component, keeping or clearing overrides                                                                                                                                                                                                  |
+| `detach_instances`             | Detach instances into frames                                                                                                                                                                                                                                        |
+| `reset_instance_overrides`     | Clear direct overrides on instances                                                                                                                                                                                                                                 |
+| `create_variable_collection`   | Create a variable collection with named modes                                                                                                                                                                                                                       |
+| `edit_variable_collection`     | Rename a collection; add / rename / remove modes                                                                                                                                                                                                                    |
+| `upsert_variables`             | Create or update many variables at once: per-mode values, aliases, scopes, code syntax                                                                                                                                                                              |
+| `delete_variables`             | Delete variables or whole collections (with confirmation)                                                                                                                                                                                                           |
+| `bind_variables`               | Bind layer size, spacing, radii, text, fill/stroke colors and effects to variables                                                                                                                                                                                  |
+| `set_variable_mode`            | Pin a collection mode (e.g. Dark) on layers                                                                                                                                                                                                                         |
+| `create_style`                 | Create a paint / text / effect / grid style from values or by copying a layer                                                                                                                                                                                       |
+| `edit_style`                   | Change a local style's name, description or values                                                                                                                                                                                                                  |
+| `apply_style`                  | Link layers to styles by slot (fill, stroke, text, effect, grid) or detach                                                                                                                                                                                          |
+| `delete_styles`                | Delete local styles (with confirmation)                                                                                                                                                                                                                             |
 
 All tools accept an optional `fileKey` parameter when multiple Figma files are connected. Use `list_files` to discover connected files and their keys.
 
@@ -204,8 +205,8 @@ All tools accept an optional `fileKey` parameter when multiple Figma files are c
 
 ### Configuration
 
-| Env var | Effect |
-|---|---|
+| Env var                    | Effect                                                                                                                                                                                                                                                  |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `FIGMA_BRIDGE_OUTPUT_ROOT` | Directory that `outputPath` / `outputDir` / `create_image` sources must stay inside. Defaults to the MCP server's working directory, which is the cwd of whichever client started the bridge process — set this when several projects share one bridge. |
 
 ### Editing Notes

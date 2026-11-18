@@ -1,3 +1,6 @@
+import { buildTextSegments } from "./textSegments";
+import type { RawSegment, SegmentStyle, TextSegmentsResult } from "./textSegments";
+
 // --- Serialized paint types (discriminated union) ---
 type SerializedSolidPaint = {
   type: "SOLID";
@@ -129,6 +132,16 @@ type SerializedNode = {
   children?: SerializedNode[];
   childCount?: number;
   truncated?: boolean;
+} & Partial<TextSegmentsResult>;
+
+/** Opt-in extras for serializeNode. Everything is off by default to keep payloads small. */
+export type SerializeOptions = {
+  /** TEXT nodes: add per-run style segments (underline, link, weight, ...). */
+  textSegments?: boolean;
+  /** With textSegments: only runs that differ from the dominant style, plus the baseline. */
+  textSegmentsOnlyDiffering?: boolean;
+  /** With textSegments: max characters echoed per run (0 = none). Default 60. */
+  maxSegmentChars?: number;
 };
 
 const isMixed = (value: unknown): value is symbol => typeof value === "symbol";
@@ -297,7 +310,79 @@ const getBounds = (node: SerializableNode): SerializedBounds | undefined => {
   return undefined;
 };
 
-const serializeText = (node: TextNode, base: SerializedNode) => {
+/** Style fields read per run. fontStyle is left out: fontName already carries it. */
+const SEGMENT_FIELDS = [
+  "fontName",
+  "fontSize",
+  "fontWeight",
+  "textDecoration",
+  "textDecorationStyle",
+  "textDecorationOffset",
+  "textDecorationThickness",
+  "textDecorationColor",
+  "textDecorationSkipInk",
+  "textCase",
+  "lineHeight",
+  "letterSpacing",
+  "fills",
+  "textStyleId",
+  "fillStyleId",
+  "listOptions",
+  "indentation",
+  "hyperlink",
+] as const;
+
+type DecorationSize = { unit: string; value?: number } | null | undefined;
+const decorationSize = (v: DecorationSize) => (v && v.unit !== "AUTO" ? v : null);
+
+/** One StyledTextSegment as a plain style object. Unset / default values become null. */
+const segmentStyle = (
+  seg: Pick<StyledTextSegment, (typeof SEGMENT_FIELDS)[number]>
+): SegmentStyle => {
+  const decorated = seg.textDecoration !== "NONE";
+  const decorationColor = seg.textDecorationColor?.value;
+  return {
+    fontFamily: seg.fontName.family,
+    fontStyle: seg.fontName.style,
+    fontWeight: seg.fontWeight,
+    fontSize: seg.fontSize,
+    textDecoration: decorated ? seg.textDecoration : null,
+    textDecorationStyle:
+      decorated && seg.textDecorationStyle !== "SOLID" ? (seg.textDecorationStyle ?? null) : null,
+    textDecorationOffset: decorated ? decorationSize(seg.textDecorationOffset) : null,
+    textDecorationThickness: decorated ? decorationSize(seg.textDecorationThickness) : null,
+    textDecorationColor:
+      decorated && decorationColor && decorationColor !== "AUTO"
+        ? toHex(decorationColor.color)
+        : null,
+    textDecorationSkipInk: decorated ? (seg.textDecorationSkipInk ?? null) : null,
+    textCase: seg.textCase !== "ORIGINAL" ? seg.textCase : null,
+    letterSpacing: serializeLetterSpacing(seg.letterSpacing),
+    lineHeight: serializeLineHeight(seg.lineHeight),
+    fills: serializePaints(seg.fills),
+    hyperlink: seg.hyperlink ? { type: seg.hyperlink.type, value: seg.hyperlink.value } : null,
+    list: seg.listOptions.type !== "NONE" ? seg.listOptions.type : null,
+    indentation: seg.indentation > 0 ? seg.indentation : null,
+    textStyleId: seg.textStyleId || null,
+    fillStyleId: seg.fillStyleId || null,
+  };
+};
+
+/** Per-run style segments for a text node (see get_node `textSegments`). */
+const serializeTextSegments = (node: TextNode, options: SerializeOptions): TextSegmentsResult => {
+  const raw: RawSegment[] = node.getStyledTextSegments([...SEGMENT_FIELDS]).map((seg) => ({
+    start: seg.start,
+    end: seg.end,
+    characters: seg.characters,
+    style: segmentStyle(seg),
+  }));
+  return buildTextSegments(raw, {
+    onlyDiffering: options.textSegmentsOnlyDiffering,
+    maxSegmentChars: options.maxSegmentChars,
+  });
+};
+
+const serializeText = (node: TextNode, base: SerializedNode, options: SerializeOptions) => {
   let fontFamily: string | undefined;
   let fontStyle: string | undefined;
   if (typeof node.fontName === "symbol") {
@@ -307,9 +392,14 @@ const serializeText = (node: TextNode, base: SerializedNode) => {
     fontFamily = node.fontName.family;
     fontStyle = node.fontName.style;
   }
+  const segments =
+    options.textSegments && node.characters.length > 0
+      ? serializeTextSegments(node, options)
+      : undefined;
   return {
     ...base,
     characters: node.characters,
+    ...segments,
     styles: {
       ...base.styles,
       fontSize: isMixed(node.fontSize) ? "mixed" : node.fontSize,
@@ -588,9 +678,14 @@ export type SerializableNode = SceneNode | PageNode;
  *
  * @param node - Node to serialize.
  * @param depth - Levels of children to serialize fully. Default Infinity.
+ * @param options - Opt-in extras (text style segments).
  * @returns The serialized node.
  */
-export const serializeNode = (node: SerializableNode, depth: number = Infinity): SerializedNode => {
+export const serializeNode = (
+  node: SerializableNode,
+  depth: number = Infinity,
+  options: SerializeOptions = {}
+): SerializedNode => {
   const base: SerializedNode = {
     id: node.id,
     name: node.name,
@@ -602,7 +697,7 @@ export const serializeNode = (node: SerializableNode, depth: number = Infinity):
   // Handle Figma TEXT nodes and FigJam STICKY / SHAPE_WITH_TEXT nodes (which
   // expose their label through a `.text` sublayer).
   if (node.type === "TEXT") {
-    return serializeText(node, base);
+    return serializeText(node, base, options);
   }
   if ((node.type === "STICKY" || node.type === "SHAPE_WITH_TEXT") && "text" in node) {
     try {
@@ -634,7 +729,7 @@ export const serializeNode = (node: SerializableNode, depth: number = Infinity):
 
     return {
       ...base,
-      children: visibleChildren.map((child) => serializeNode(child, depth - 1)),
+      children: visibleChildren.map((child) => serializeNode(child, depth - 1, options)),
     };
   }
 

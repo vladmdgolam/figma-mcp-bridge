@@ -1,4 +1,5 @@
 import { serializeNode } from "./serializer";
+import type { SerializeOptions } from "./serializer";
 import type { SerializableNode } from "./serializer";
 import { addLayersToFrame } from "../html-figma/figma";
 import { getPrototypeConnections, scanPrototype, tracePrototypeFlow } from "./prototype";
@@ -703,6 +704,18 @@ const requestedDepth = (request: ServerRequest, fallback: number): number => {
   return typeof depth === "number" && Number.isFinite(depth) && depth >= 0 ? depth : fallback;
 };
 
+/** Reads the opt-in text segment params off a request (see get_node `textSegments`). */
+const requestedSerializeOptions = (request: ServerRequest): SerializeOptions => {
+  const params = request.params;
+  if (params?.textSegments !== true) return {};
+  const max = params.maxSegmentChars;
+  return {
+    textSegments: true,
+    textSegmentsOnlyDiffering: params.textSegmentsOnlyDiffering === true,
+    maxSegmentChars: typeof max === "number" && Number.isFinite(max) && max >= 0 ? max : undefined,
+  };
+};
+
 const requirePrototypes = (toolName: string): void => {
   if (isFigJam()) {
     throw new Error(`${toolName} is not available in FigJam (FigJam files have no prototypes)`);
@@ -786,14 +799,18 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
         return {
           type: request.type,
           requestId: request.requestId,
-          data: serializeNode(figma.currentPage, requestedDepth(request, 2)),
+          data: serializeNode(
+            figma.currentPage,
+            requestedDepth(request, 2),
+            requestedSerializeOptions(request)
+          ),
         };
       case "get_selection":
         return {
           type: request.type,
           requestId: request.requestId,
           data: figma.currentPage.selection.map((node) =>
-            serializeNode(node, requestedDepth(request, 2))
+            serializeNode(node, requestedDepth(request, 2), requestedSerializeOptions(request))
           ),
         };
       case "get_layout_tree": {
@@ -814,7 +831,11 @@ const handleRequest = async (request: ServerRequest): Promise<PluginResponse> =>
         if (!node || node.type === "DOCUMENT") {
           throw new Error(`Node not found: ${nodeId}`);
         }
-        const data = serializeNode(node as SceneNode, requestedDepth(request, 0));
+        const data = serializeNode(
+          node as SceneNode,
+          requestedDepth(request, 0),
+          requestedSerializeOptions(request)
+        );
         if (!request.params?.includePrototype) {
           return { type: request.type, requestId: request.requestId, data };
         }

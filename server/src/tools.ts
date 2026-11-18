@@ -182,11 +182,16 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "get_selection",
-    "Get the nodes currently selected in Figma/FigJam, serialized to `depth` levels (default 2) with deeper nodes as {id,name,type} stubs. Pass a child id to get_node to drill in further. When multiple files are connected, specify fileKey.",
+    "Get the nodes currently selected in Figma/FigJam, serialized to `depth` levels (default 2) with deeper nodes as {id,name,type} stubs. Pass a child id to get_node to drill in further. Text with mixed styles reports only 'mixed'; pass textSegments: true (optionally textSegmentsOnlyDiffering) to see which characters are underlined, linked or styled differently. When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_selection.shape,
-    async ({ depth, fileKey }): Promise<ToolResult> => {
+    async ({ depth, fileKey, ...segmentParams }): Promise<ToolResult> => {
       return renderResponse(() =>
-        node.sendWithParams("get_selection", undefined, { depth: depth ?? 2 }, fileKey)
+        node.sendWithParams(
+          "get_selection",
+          undefined,
+          { depth: depth ?? 2, ...textSegmentParams(segmentParams) },
+          fileKey
+        )
       );
     }
   );
@@ -201,14 +206,28 @@ export function registerTools(server: McpServer, node: Node, port: number): void
 
   server.tool(
     "get_node",
-    "Get a specific Figma/FigJam node by ID. Accepts top-level IDs like '4029:12345' and instance-child IDs like 'I12740:17806;12740:17793'. Never use hyphens. By default returns the node with its children as {id,name,type} stubs; call get_node again on a child ID to drill in. Pass `depth` for more levels at once, or a large value for the full subtree. Pass `fields` to project only specific dot-paths (e.g. ['bounds','styles.fills']) and trim the response. Pass includePrototype: true to also get the prototype interactions on the node and its descendants. Omitted style fields are at Figma defaults (opacity=1, visible=true, blendMode=NORMAL/PASS_THROUGH, rotation=0, cornerRadius=0, constraints={MIN,MIN}; empty fills/strokes/effects mean none set). When multiple files are connected, specify fileKey.",
+    "Get a specific Figma/FigJam node by ID. Accepts top-level IDs like '4029:12345' and instance-child IDs like 'I12740:17806;12740:17793'. Never use hyphens. By default returns the node with its children as {id,name,type} stubs; call get_node again on a child ID to drill in. Pass `depth` for more levels at once, or a large value for the full subtree. Pass `fields` to project only specific dot-paths (e.g. ['bounds','styles.fills']) and trim the response. Pass includePrototype: true to also get the prototype interactions on the node and its descendants. TEXT nodes with mixed styling report only 'mixed' (styles.textDecoration: 'mixed', styles.text.hyperlink: 'mixed'): pass textSegments: true to get per-character-run styles ({start,end,characters,...} with underline/link/weight/size/color/case/spacing), and add textSegmentsOnlyDiffering: true on long texts to receive only the runs that differ from the dominant style plus a baseline; maxSegmentChars caps the text echoed per run (default 60). Omitted style fields are at Figma defaults (opacity=1, visible=true, blendMode=NORMAL/PASS_THROUGH, rotation=0, cornerRadius=0, constraints={MIN,MIN}; empty fills/strokes/effects mean none set). When multiple files are connected, specify fileKey.",
     toolInputSchemas.get_node.shape,
-    async ({ nodeId, depth, fields, includePrototype, fileKey }): Promise<ToolResult> => {
-      const params: Record<string, unknown> = { depth: depth ?? 0 };
+    async ({
+      nodeId,
+      depth,
+      fields,
+      includePrototype,
+      fileKey,
+      ...segmentParams
+    }): Promise<ToolResult> => {
+      const params: Record<string, unknown> = {
+        depth: depth ?? 0,
+        ...textSegmentParams(segmentParams),
+      };
       if (includePrototype !== undefined) params.includePrototype = includePrototype;
+      // A projection must not silently strip the segments the caller asked for.
+      const keep = segmentParams.textSegments
+        ? ["textSegments", "textSegmentCount", "textSegmentsBaseline"]
+        : [];
       return renderResponse(
         () => node.sendWithParams("get_node", [nodeId], params, fileKey),
-        (data) => projectFields(data, fields)
+        (data) => projectFields(data, fields && fields.length > 0 ? [...fields, ...keep] : fields)
       );
     }
   );
@@ -1397,6 +1416,23 @@ export async function executeSaveScreenshots(
     hasErrors: failed > 0,
     results,
   };
+}
+
+/**
+ * Picks the text segment options out of tool args. Nothing is sent unless textSegments is true.
+ * @param args - Tool args carrying the optional textSegments* params.
+ * @returns Params to forward to the plugin.
+ */
+function textSegmentParams(args: {
+  textSegments?: boolean;
+  textSegmentsOnlyDiffering?: boolean;
+  maxSegmentChars?: number;
+}): Record<string, unknown> {
+  if (!args.textSegments) return {};
+  const out: Record<string, unknown> = { textSegments: true };
+  if (args.textSegmentsOnlyDiffering) out.textSegmentsOnlyDiffering = true;
+  if (args.maxSegmentChars !== undefined) out.maxSegmentChars = args.maxSegmentChars;
+  return out;
 }
 
 /**

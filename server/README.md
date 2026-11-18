@@ -25,7 +25,7 @@ Or point your MCP client straight at it:
 }
 ```
 
-**The server alone is half the product.** You also need the Figma plugin that talks to it — build it from [the repo](https://github.com/vladmdgolam/figma-mcp-bridge) (`plugin/`) and import the manifest via Figma → Plugins → Development → *Import plugin from manifest*.
+**The server alone is half the product.** You also need the Figma plugin that talks to it — build it from [the repo](https://github.com/vladmdgolam/figma-mcp-bridge) (`plugin/`) and import the manifest via Figma → Plugins → Development → _Import plugin from manifest_.
 
 ## What this fork adds
 
@@ -35,6 +35,7 @@ Beyond upstream's tool set:
 - **`get_screenshot` writes to disk by default** — returns `{path, width, height, format, scale}` instead of a base64 blob. Pass `inline: true` for the old behavior, or `outputPath` to choose the destination.
 - **`get_screenshot({ isolate: true })`** — hides every sibling of each target before exporting and restores them in a `finally` (safe even if the export throws). Captures one layer cleanly without the rest of the frame, atomically, instead of a manual hide/export/restore loop.
 - **`find_nodes`** — walk the tree by name substring, regex, and/or node type. Returns lightweight `{id, name, type, bounds}` rows so an agent can locate a node without serializing its subtree.
+- **`get_node({ textSegments })` — per-character text styles.** A TEXT node with mixed styling otherwise reports only `"textDecoration": "mixed"` / `"hyperlink": "mixed"`. `textSegments: true` (also on `get_selection`) adds `textSegments`, one `{ start, end, characters, ...style }` per run of identically styled characters, built on `getStyledTextSegments`. Style keys are present only when set: `fontFamily`, `fontStyle`, `fontWeight`, `fontSize`, `textDecoration` (+ style/offset/thickness/color/skipInk), `textCase`, `letterSpacing`, `lineHeight`, `fills`, `hyperlink {type,value}`, `list`, `indentation`, `textStyleId`, `fillStyleId`. For long texts add `textSegmentsOnlyDiffering: true` to get only the runs that differ from the dominant style, each with just its differing keys (`null` = unset), plus `textSegmentsBaseline`; `maxSegmentChars` caps the text echoed per run (default 60, `0` = none). Needs a rebuilt/reloaded plugin.
 - **`get_node_by_path`** — resolve a slash-separated chain of child names (`'Hero/Card/Title'`) to a node. Survives file revisions that reshuffle node IDs, unlike cached IDs.
 - **`image_fill_export`** — resolve an `imageHash` from a serialized IMAGE paint to real PNG bytes. Closes the gap where `get_node` handed back hashes an agent had no way to fetch.
 - **`save_children_json`** — serialize every direct visible child of a parent to its own JSON file in one call.
